@@ -1,4 +1,4 @@
-# Convenience Store POS & Inventory (Node.js + Postgres for Vercel)
+# SmartMart POS & Inventory (Node.js + Postgres for Vercel)
 
 A port of the PHP/MySQL store system. Same screens (login, installer, dashboard, POS, products, edit product, reports, receipt, CSV export), rebuilt so it runs on Vercel.
 

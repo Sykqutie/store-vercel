@@ -5,7 +5,7 @@
 
   A.root.innerHTML =
     '<div class="auth-wrap"><div class="panel auth">' +
-    '<h1>CONVENIENCE <span style="color:var(--cyan)">STORE</span></h1>' +
+    '<h1>SMART<span style="color:var(--cyan)">MART</span></h1>' +
     '<p>POS &amp; Inventory · Secure access</p>' +
     '<div id="notice"></div>' +
     '<form id="f" class="stack" autocomplete="on">' +

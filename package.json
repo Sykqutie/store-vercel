@@ -1,8 +1,8 @@
 {
-  "name": "convenience-store-pos",
+  "name": "smartmart-pos",
   "version": "2.0.0",
   "private": true,
-  "description": "Convenience store POS and inventory, ported from PHP/MySQL to Node.js/Postgres for Vercel",
+  "description": "SmartMart POS and inventory, ported from PHP/MySQL to Node.js/Postgres for Vercel",
   "engines": { "node": ">=20" },
   "scripts": {
     "dev": "node --env-file=.env dev.js",

@@ -1,5 +1,5 @@
 -- ============================================================
--- Convenience Store POS & Inventory: PostgreSQL schema
+-- SmartMart POS & Inventory: PostgreSQL schema
 -- Ported from the MySQL database.sql. The installer (POST /api/install)
 -- runs this file's contents automatically; you can also run it by hand.
 -- ============================================================

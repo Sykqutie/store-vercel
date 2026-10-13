@@ -122,7 +122,7 @@ api.post('/logout', (req, res) => {
 });
 
 api.get('/me', auth.requireAuth, (req, res) => {
-  res.json({ username: req.user.username, store: process.env.STORE_NAME || 'Convenience Store' });
+  res.json({ username: req.user.username, store: process.env.STORE_NAME || 'SmartMart' });
 });
 
 // Everything below needs a signed-in user.
@@ -369,7 +369,7 @@ api.get('/sales/:id', wrap(async (req, res) => {
     'SELECT product_name, quantity, price::float8 AS price, subtotal::float8 AS subtotal FROM sale_items WHERE sale_id = $1 ORDER BY id',
     [id]
   );
-  res.json({ sale, items, store: process.env.STORE_NAME || 'Convenience Store' });
+  res.json({ sale, items, store: process.env.STORE_NAME || 'SmartMart' });
 }));
 
 // CSV of every sold line (honors the same date/search filters as the report).
