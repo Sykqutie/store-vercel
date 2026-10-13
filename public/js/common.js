@@ -95,7 +95,7 @@
     root.innerHTML =
       '<header class="top"><div class="brand">' +
       '<img class="mark" src="/logo.svg" alt="SmartMart logo">' +
-      '<div><h1>' + esc(String(me.store).toUpperCase()) + '</h1><p>POS &amp; inventory</p></div></div>' +
+      '<div><h1>' + esc(String(me.store).toUpperCase()) + '</h1><p>Shop easy. Live easy.</p></div></div>' +
       '<div class="status"><span class="dot"></span><span>Online</span><time id="clock"></time></div></header>' +
       '<nav class="tabs" aria-label="Sections">' + tabs +
       '<span class="sp"></span><span class="who">' + esc(me.username) + '</span>' +
