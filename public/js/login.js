@@ -5,6 +5,7 @@
 
   A.root.innerHTML =
     '<div class="auth-wrap"><div class="panel auth">' +
+    '<img src="/logo.svg" alt="SmartMart logo" width="64" height="64" style="align-self:center">' +
     '<h1>SMART<span style="color:var(--cyan)">MART</span></h1>' +
     '<p>POS &amp; Inventory · Secure access</p>' +
     '<div id="notice"></div>' +

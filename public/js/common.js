@@ -94,7 +94,7 @@
     }).join('');
     root.innerHTML =
       '<header class="top"><div class="brand">' +
-      '<svg class="mark" viewBox="0 0 48 48" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#35e0ff"/><stop offset="1" stop-color="#8b6bff"/></linearGradient></defs><path class="hex" d="M24 3 42 13.5v21L24 45 6 34.5v-21z" fill="none" stroke="url(#lg)" stroke-width="2.5"/><path d="M16 31V17l16 14V17" fill="none" stroke="url(#lg)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+      '<img class="mark" src="/logo.svg" alt="SmartMart logo">' +
       '<div><h1>' + esc(String(me.store).toUpperCase()) + '</h1><p>POS &amp; inventory</p></div></div>' +
       '<div class="status"><span class="dot"></span><span>Online</span><time id="clock"></time></div></header>' +
       '<nav class="tabs" aria-label="Sections">' + tabs +
