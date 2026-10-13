@@ -5,7 +5,7 @@
 
   A.root.innerHTML =
     '<div class="auth-wrap"><div class="panel auth">' +
-    '<img src="/logo.svg" alt="SmartMart logo" width="64" height="64" style="align-self:center">' +
+    '<img src="/logo-full.svg" alt="SmartMart — Shop easy. Live easy." width="210" style="align-self:center;max-width:100%;height:auto">' +
     '<h1>INSTALLER</h1><p>Create the database tables and your admin account.</p>' +
     '<div id="state"></div>' +
     '<form id="f" class="stack">' +
