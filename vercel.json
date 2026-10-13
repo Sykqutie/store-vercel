@@ -1,0 +1,33 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/index.js": { "maxDuration": 15, "includeFiles": "database/**" }
+  },
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api" },
+    { "source": "/", "destination": "/html/index.html" },
+    { "source": "/login", "destination": "/html/login.html" },
+    { "source": "/install", "destination": "/html/install.html" },
+    { "source": "/dashboard", "destination": "/html/dashboard.html" },
+    { "source": "/pos", "destination": "/html/pos.html" },
+    { "source": "/products", "destination": "/html/products.html" },
+    { "source": "/edit-product", "destination": "/html/edit-product.html" },
+    { "source": "/report", "destination": "/html/report.html" },
+    { "source": "/receipt", "destination": "/html/receipt.html" }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "Referrer-Policy", "value": "same-origin" },
+        { "key": "Content-Security-Policy", "value": "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" }
+      ]
+    },
+    {
+      "source": "/api/(.*)",
+      "headers": [{ "key": "Cache-Control", "value": "no-store" }]
+    }
+  ]
+}
