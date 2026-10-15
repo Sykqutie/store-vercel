@@ -8,7 +8,7 @@ const app = require('./api/index.js');
 
 const PAGES = {
   '/': 'index', '/login': 'login', '/install': 'install', '/dashboard': 'dashboard', '/pos': 'pos',
-  '/products': 'products', '/edit-product': 'edit-product', '/report': 'report', '/receipt': 'receipt'
+  '/products': 'products', '/inventory': 'products', '/edit-product': 'edit-product', '/report': 'report', '/receipt': 'receipt'
 };
 
 const root = express();

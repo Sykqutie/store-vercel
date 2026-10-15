@@ -1,27 +1,24 @@
-/* POS (replaces pos.php): product grid, barcode scan, cart, payment, checkout, then receipt. */
+/* POS (replaces pos.php): inventory grid, barcode scan, cart, payment, checkout, then receipt. */
 (async function () {
   'use strict';
   var A = App, esc = A.esc, money = A.money;
   var main = await A.mountShell('pos');
   if (!main) return;
 
-  var products = [];   // all products from the API
+  var products = [];   // all inventory items from the API
   var cart = [];       // [{ id, qty }]
-  var method = 'Cash';
   var search = '';
   var VAT = 12;        // prices include VAT; shown for information only (the server computes the real values)
 
   main.innerHTML =
     '<div class="bill">' +
-    '<div class="panel pad"><div class="ph"><h2>Select products</h2><span class="mono mute" id="count"></span></div>' +
-    '<div class="toolbar"><input id="q" type="search" placeholder="Search by name or barcode" aria-label="Search products"></div>' +
+    '<div class="panel pad"><div class="ph"><h2>Select inventory items</h2><span class="mono mute" id="count"></span></div>' +
+    '<div class="toolbar"><input id="q" type="search" placeholder="Search by name or barcode" aria-label="Search inventory"></div>' +
     '<div class="toolbar" style="margin-bottom:6px"><input id="scan" style="flex:1 1 220px;max-width:380px" placeholder="Scan barcode, then press Enter" autocomplete="off" aria-label="Barcode"><button class="btn" id="scanBtn" type="button">Add</button></div>' +
     '<div class="mono mute" id="scanMsg" style="min-height:1.5em;margin-bottom:10px;font-size:12px"></div>' +
     '<div id="catalog" class="products"></div></div>' +
     '<aside class="panel pad cart"><div class="ph" style="margin-bottom:0"><h2>Current cart</h2></div>' +
     '<div id="lines" class="lines"></div>' +
-    '<label for="disc">Discount<select id="disc"><option value="0">None</option><option value="5">Loyalty 5%</option><option value="10">Promo 10%</option><option value="20">Senior / PWD 20%</option></select></label>' +
-    '<div class="seg" id="methods"><button type="button" data-m="Cash" aria-pressed="true">Cash</button><button type="button" data-m="GCash" aria-pressed="false">GCash</button><button type="button" data-m="Card" aria-pressed="false">Card</button></div>' +
     '<div id="cashRow"><label for="tender">Cash received<input id="tender" inputmode="decimal" autocomplete="off" placeholder="0.00"></label><div class="quick" id="quick"></div></div>' +
     '<div id="sum" class="sum"></div>' +
     '<div class="alert" id="err" hidden></div>' +
@@ -30,7 +27,7 @@
 
   var el = {
     q: A.$('#q'), scan: A.$('#scan'), msg: A.$('#scanMsg'), catalog: A.$('#catalog'), lines: A.$('#lines'),
-    disc: A.$('#disc'), tender: A.$('#tender'), sum: A.$('#sum'), charge: A.$('#charge'), err: A.$('#err'),
+    tender: A.$('#tender'), sum: A.$('#sum'), charge: A.$('#charge'), err: A.$('#err'),
     quick: A.$('#quick'), cashRow: A.$('#cashRow'), count: A.$('#count')
   };
 
@@ -42,9 +39,7 @@
   function totals() {
     var sub = 0;
     cart.forEach(function (l) { sub += cents(byId(l.id).price) * l.qty; });
-    var disc = Math.round(sub * Number(el.disc.value) / 100);
-    var total = sub - disc;
-    return { sub: sub, disc: disc, total: total, vat: Math.round(total * VAT / (100 + VAT)) };
+    return { sub: sub, total: sub, vat: Math.round(sub * VAT / (100 + VAT)) };
   }
 
   function say(text, ok) {
@@ -76,7 +71,7 @@
         '<span class="hx">' + esc(initials) + '</span><span class="nm">' + esc(p.name) + '</span>' +
         '<span class="pr">' + money(p.price) + '</span>' +
         '<span class="st">' + (p.stock <= 0 ? 'Out of stock' : left + ' left') + '</span></button>';
-    }).join('') : '<div class="empty" style="grid-column:1/-1">No products match.</div>';
+    }).join('') : '<div class="empty" style="grid-column:1/-1">No inventory items match.</div>';
   }
 
   function renderCart() {
@@ -86,25 +81,23 @@
         '<div class="qty"><button type="button" data-act="dec" data-id="' + p.id + '" aria-label="Decrease quantity">−</button><span class="mono">' + l.qty + '</span><button type="button" data-act="inc" data-id="' + p.id + '" aria-label="Increase quantity">+</button></div>' +
         '<div class="mono lt">' + money(p.price * l.qty) + '</div>' +
         '<button class="x" type="button" data-act="rm" data-id="' + p.id + '" aria-label="Remove ' + esc(p.name) + '">×</button></div>';
-    }).join('') : '<div class="empty">Tap a product to add it.</div>';
+    }).join('') : '<div class="empty">Tap an inventory item to add it.</div>';
     renderSummary();
     renderCatalog();
   }
 
   function renderSummary() {
-    var t = totals(), cash = method === 'Cash';
-    el.cashRow.hidden = !cash;
+    var t = totals();
     el.quick.innerHTML = t.total > 0 ? [['Exact', t.total / 100], ['100', 100], ['500', 500], ['1000', 1000]].map(function (a) {
       return '<button class="chip" type="button" data-amt="' + a[1] + '">' + a[0] + '</button>';
     }).join('') : '';
     var change = (cents(tendered()) - t.total) / 100;
     el.sum.innerHTML =
       '<div class="r"><span>Subtotal</span><span>' + money(t.sub / 100) + '</span></div>' +
-      '<div class="r"><span>Discount</span><span>−' + money(t.disc / 100) + '</span></div>' +
       '<div class="r"><span>VAT ' + VAT + '% (included)</span><span>' + money(t.vat / 100) + '</span></div>' +
-      (cash && t.total > 0 ? '<div class="r"><span>Change</span><span class="' + (change < 0 ? 'down' : 'up') + '">' + (change < 0 ? 'Short ' + money(-change) : money(change)) + '</span></div>' : '') +
+      (t.total > 0 ? '<div class="r"><span>Change</span><span class="' + (change < 0 ? 'down' : 'up') + '">' + (change < 0 ? 'Short ' + money(-change) : money(change)) + '</span></div>' : '') +
       '<div class="r tot"><span>Total</span><span>' + money(t.total / 100) + '</span></div>';
-    el.charge.disabled = !cart.length || (cash && cents(tendered()) < t.total);
+    el.charge.disabled = !cart.length || cents(tendered()) < t.total;
   }
 
   function add(id) {
@@ -151,10 +144,9 @@
     try {
       var body = {
         items: cart.map(function (l) { return { id: l.id, qty: l.qty }; }),
-        payment_method: method,
-        discount_percent: Number(el.disc.value)
+        payment_method: 'Cash',
+        amount_tendered: tendered()
       };
-      if (method === 'Cash') body.amount_tendered = tendered();
       var r = await A.api('/checkout', { body: body });
       location.href = '/receipt?id=' + r.id;
     } catch (e) {
@@ -182,20 +174,12 @@
     }
     if (b.dataset.act === 'rm') { cart = cart.filter(function (x) { return x.id !== id; }); renderCart(); }
   });
-  A.$('#methods').addEventListener('click', function (e) {
-    var b = e.target.closest('[data-m]');
-    if (!b) return;
-    method = b.dataset.m;
-    Array.prototype.forEach.call(A.$('#methods').children, function (x) { x.setAttribute('aria-pressed', x === b); });
-    renderSummary();
-  });
   el.quick.addEventListener('click', function (e) {
     var b = e.target.closest('[data-amt]');
     if (b) { el.tender.value = b.dataset.amt; renderSummary(); }
   });
   el.q.addEventListener('input', function () { search = el.q.value; renderCatalog(); });
   el.tender.addEventListener('input', renderSummary);
-  el.disc.addEventListener('change', renderSummary);
   el.scan.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); scanAdd(); } });
   A.$('#scanBtn').addEventListener('click', scanAdd);
   el.charge.addEventListener('click', checkout);

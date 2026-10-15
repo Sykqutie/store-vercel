@@ -46,15 +46,15 @@
 
   main.innerHTML =
     '<div class="page-head"><div><h1>Command <span>center</span></h1><div class="sub">Welcome back, <b style="color:var(--fg)">' + esc(d.user) + '</b></div></div>' +
-    '<div class="btn-row"><a class="btn primary" href="/pos">New sale</a><a class="btn" href="/products">Add product</a><a class="btn" href="/report">Analytics</a></div></div>' +
+    '<div class="btn-row"><a class="btn primary" href="/pos">New sale</a><a class="btn" href="/inventory">Add inventory item</a><a class="btn" href="/report">Analytics</a></div></div>' +
     '<div class="kpis six">' + kpis.map(function (k, i) {
       return '<div class="panel kpi"><span class="lb">' + k.lb + '</span><span class="v sm" id="kv' + i + '">0</span><span class="d">' + k.d + '</span></div>';
     }).join('') + '</div>' +
     '<div class="grid2"><div class="panel pad"><div class="ph"><h2>Revenue vs profit · last 7 days</h2></div><div class="chart-box"><canvas id="dashChart" role="img" aria-label="Revenue and profit for the last 7 days"></canvas></div></div>' +
     '<div class="panel pad"><div class="ph"><h2>Stock by category</h2></div><div class="chart-box" style="height:200px"><canvas id="catChart" role="img" aria-label="Units in stock by category"></canvas></div>' +
     '<div class="ph" style="margin-top:16px"><h2>Top sellers</h2></div><div class="list">' + topHtml + '</div></div></div>' +
-    '<div class="grid2 b"><div class="panel pad"><div class="ph"><h2>Low stock alerts</h2><a class="btn sm" href="/products?status=low">Restock</a></div>' +
-    '<div class="tw"><table><thead><tr><th>Product</th><th>Stock</th><th>Status</th></tr></thead><tbody>' + lowHtml + '</tbody></table></div></div>' +
+    '<div class="grid2 b"><div class="panel pad"><div class="ph"><h2>Low stock alerts</h2><a class="btn sm" href="/inventory?status=low">Restock</a></div>' +
+    '<div class="tw"><table><thead><tr><th>Item</th><th>Stock</th><th>Status</th></tr></thead><tbody>' + lowHtml + '</tbody></table></div></div>' +
     '<div class="panel pad"><div class="ph"><h2>Recent transactions</h2><a class="btn sm" href="/report">View all</a></div>' +
     '<div class="tw"><table><thead><tr><th>Txn</th><th>Total</th><th>Pay</th><th>Time</th><th></th></tr></thead><tbody>' + recentHtml + '</tbody></table></div></div></div>';
 

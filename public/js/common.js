@@ -81,7 +81,7 @@
   var NAV = [
     ['dashboard', 'Dashboard', '/dashboard'],
     ['pos', 'POS', '/pos'],
-    ['products', 'Products', '/products'],
+    ['products', 'Inventory', '/inventory'],
     ['report', 'Reports', '/report']
   ];
 

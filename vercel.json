@@ -11,6 +11,7 @@
     { "source": "/dashboard", "destination": "/html/dashboard.html" },
     { "source": "/pos", "destination": "/html/pos.html" },
     { "source": "/products", "destination": "/html/products.html" },
+    { "source": "/inventory", "destination": "/html/products.html" },
     { "source": "/edit-product", "destination": "/html/edit-product.html" },
     { "source": "/report", "destination": "/html/report.html" },
     { "source": "/receipt", "destination": "/html/receipt.html" }

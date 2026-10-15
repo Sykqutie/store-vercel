@@ -42,7 +42,7 @@
       ['Daily revenue', money(s.day_revenue), 'Profit: ' + money(s.day_profit)],
       ['Weekly revenue', money(s.week_revenue), 'Profit: ' + money(s.week_profit)],
       ['Monthly revenue', money(s.month_revenue), 'Profit: ' + money(s.month_profit)],
-      ['Top selling product', r.best ? esc(r.best.product_name) : 'N/A', r.best ? 'Total sold: ' + r.best.total_qty + ' units' : 'No sales yet']
+      ['Top selling item', r.best ? esc(r.best.product_name) : 'N/A', r.best ? 'Total sold: ' + r.best.total_qty + ' units' : 'No sales yet']
     ].map(function (c) {
       return '<div class="panel kpi"><span class="lb">' + c[0] + '</span><span class="v sm">' + c[1] + '</span><span class="d">' + c[2] + '</span></div>';
     }).join('');

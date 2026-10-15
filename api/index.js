@@ -16,7 +16,6 @@ const api = express.Router();
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const bad = (res, message, code = 400) => res.status(code).json({ error: message });
 
-const PAYMENT_METHODS = ['Cash', 'GCash', 'Card'];
 const VAT_PERCENT = 12; // prices are VAT-inclusive; the VAT part is stored in sales.tax
 const DUMMY_HASH = bcrypt.hashSync('not-a-real-password', 10);
 
@@ -269,9 +268,7 @@ api.post('/checkout', wrap(async (req, res) => {
     if (!id || !qty) return bad(res, 'The cart has an invalid item.');
     qtyById.set(id, (qtyById.get(id) || 0) + qty);
   }
-  const method = PAYMENT_METHODS.includes(b.payment_method) ? b.payment_method : 'Cash';
-  const discountPct = b.discount_percent === undefined ? 0 : number(b.discount_percent, { max: 100 });
-  if (discountPct === null) return bad(res, 'Discount must be between 0 and 100.');
+  const method = 'Cash';
 
   const result = await db.tx(async (c) => {
     const ids = [...qtyById.keys()];
@@ -289,23 +286,19 @@ api.post('/checkout', wrap(async (req, res) => {
       sub += cents(p.price) * qty;
       cost += cents(p.cost) * qty;
     }
-    const discount = Math.round((sub * discountPct) / 100);
-    const total = sub - discount;
+    const total = sub;
     const profit = total - cost;
     const vat = Math.round((total * VAT_PERCENT) / (100 + VAT_PERCENT));
 
-    let tendered = total;
-    if (method === 'Cash') {
-      const given = number(b.amount_tendered, { max: 1e9 });
-      if (given === null || cents(given) < total) return { error: 'Cash received is less than the total.' };
-      tendered = cents(given);
-    }
+    const given = number(b.amount_tendered, { max: 1e9 });
+    if (given === null || cents(given) < total) return { error: 'Cash received is less than the total.' };
+    const tendered = cents(given);
 
     const txn = 'TXN-' + Date.now().toString(36).toUpperCase() + crypto.randomBytes(2).toString('hex').toUpperCase();
     const { rows: [sale] } = await c.query(
       `INSERT INTO sales (transaction_id, total_amount, total_cost, profit, discount, tax, amount_tendered, change_amount, payment_method, cashier)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
-      [txn, money(total), money(cost), money(profit), money(discount), money(vat), money(tendered), money(tendered - total), method, req.user.username]
+      [txn, money(total), money(cost), money(profit), money(0), money(vat), money(tendered), money(tendered - total), method, req.user.username]
     );
     for (const p of rows) {
       const qty = qtyById.get(p.id);

@@ -1,4 +1,4 @@
-/* One-time installer (replaces install.php). Creates tables, the admin account and optional demo products. */
+/* One-time installer (replaces install.php). Creates tables, the admin account and optional demo inventory items. */
 (async function () {
   'use strict';
   var A = App;
@@ -11,7 +11,7 @@
     '<form id="f" class="stack">' +
     '<label for="username">Admin username<input id="username" value="admin" maxlength="50" required></label>' +
     '<label for="password">Admin password (8+ characters)<input id="password" type="password" minlength="8" maxlength="72" autocomplete="new-password" required></label>' +
-    '<label style="flex-direction:row;align-items:center;gap:10px;text-transform:none;letter-spacing:0;font-family:var(--font-b);font-size:14px;color:var(--fg)" for="seed"><input id="seed" type="checkbox" checked style="width:auto"> Add 10 demo products</label>' +
+    '<label style="flex-direction:row;align-items:center;gap:10px;text-transform:none;letter-spacing:0;font-family:var(--font-b);font-size:14px;color:var(--fg)" for="seed"><input id="seed" type="checkbox" checked style="width:auto"> Add 10 demo inventory items</label>' +
     '<div class="alert" id="err" hidden></div>' +
     '<button class="btn primary wide" id="go" type="submit">Install</button>' +
     '<a class="btn wide" href="/login" style="text-align:center">Back to login</a></form>' +
@@ -44,7 +44,7 @@
         noRedirect: true,
         body: { username: A.$('#username').value, password: A.$('#password').value, seed: A.$('#seed').checked }
       });
-      A.$('#state').innerHTML = '<div class="alert ok">Database is ready' + (r.seeded ? ' with ' + r.seeded + ' demo products' : '') + '. <a href="/login">Go to login</a>.</div>';
+      A.$('#state').innerHTML = '<div class="alert ok">Database is ready' + (r.seeded ? ' with ' + r.seeded + ' demo inventory items' : '') + '. <a href="/login">Go to login</a>.</div>';
       A.$('#f').hidden = true;
     } catch (ex) {
       err.textContent = ex.message;

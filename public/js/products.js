@@ -1,4 +1,4 @@
-/* Products (replaces product.php): add or restock on the left, inventory table on the right. */
+/* Inventory (replaces product.php): add or restock on the left, inventory table on the right. */
 (async function () {
   'use strict';
   var A = App, esc = A.esc, money = A.money;
@@ -10,7 +10,7 @@
 
   main.innerHTML =
     '<div class="two">' +
-    '<div class="panel pad"><div class="ph"><h2>Add / restock product</h2></div>' +
+    '<div class="panel pad"><div class="ph"><h2>Add / restock inventory item</h2></div>' +
     '<form id="f" class="stack">' +
     '<label for="barcode">Barcode<span class="bc-row"><input id="barcode" maxlength="64" required style="flex:1;min-width:0"><button class="btn sm" id="gen" type="button" title="Generate a scannable barcode">Generate</button></span></label>' +
     '<label for="name">Item name<input id="name" maxlength="150" required></label>' +
@@ -21,8 +21,8 @@
     '<label for="threshold">Low stock alert at<input id="threshold" type="number" step="1" min="0" value="5" required></label></div>' +
     '<div class="note">Saving an existing barcode adds the quantity to its stock and updates the details.</div>' +
     '<div class="alert" id="err" hidden></div>' +
-    '<button class="btn primary wide" id="save" type="submit">Save product</button></form></div>' +
-    '<div class="panel pad"><div class="ph"><h2>Product inventory</h2><span class="mono mute" id="count"></span></div>' +
+    '<button class="btn primary wide" id="save" type="submit">Save inventory item</button></form></div>' +
+    '<div class="panel pad"><div class="ph"><h2>Inventory</h2><span class="mono mute" id="count"></span></div>' +
     '<div class="toolbar"><input id="q" type="search" placeholder="Search name, barcode or category" aria-label="Search inventory">' +
     '<div class="chips" id="chips"></div></div>' +
     '<div class="tw"><table><thead><tr><th>Barcode (scan)</th><th>Name</th><th class="n">Cost</th><th class="n">Price</th><th>Stock</th><th>Status</th><th></th></tr></thead><tbody id="body"></tbody></table></div></div></div>';
@@ -91,7 +91,7 @@
           '<td class="n mono mute">' + money(p.cost_price) + '</td><td class="n mono">' + money(p.price) + '</td>' +
           '<td class="mono"><b>' + p.stock + '</b></td><td>' + badge + '</td>' +
           '<td><div class="acts"><a class="btn sm" href="/edit-product?id=' + p.id + '">Edit</a><button class="btn sm" type="button" data-label="' + p.id + '">Label</button></div></td></tr>';
-      }).join('') : '<tr><td colspan="7" class="empty">No products found.</td></tr>';
+      }).join('') : '<tr><td colspan="7" class="empty">No inventory items found.</td></tr>';
       paintBarcodes();
     } catch (e) {
       body.innerHTML = '<tr><td colspan="7"><div class="alert">' + esc(e.message) + '</div></td></tr>';
@@ -129,7 +129,7 @@
           stock: A.$('#stock').value, low_stock_threshold: A.$('#threshold').value
         }
       });
-      A.toast(r.created ? 'Product added' : 'Product restocked');
+      A.toast(r.created ? 'Inventory item added' : 'Inventory item restocked');
       A.$('#f').reset();
       A.$('#category').value = 'General';
       A.$('#threshold').value = '5';
