@@ -1,0 +1,39 @@
+{
+  "name": "Convenience Store POS",
+  "short_name": "Store POS",
+  "description": "Convenience Store POS — point of sale and inventory that works offline and syncs when back online.",
+  "id": "/",
+  "start_url": "/dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#070D19",
+  "theme_color": "#070D19",
+  "categories": ["business", "shopping"],
+  "icons": [
+    {
+      "src": "/icons/smartmart-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/smartmart-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/smartmart-maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/smartmart-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

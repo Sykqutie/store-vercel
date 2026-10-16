@@ -17,6 +17,7 @@ store-vercel/
 ├── lib/
 │   ├── db.js             Postgres pool and transactions
 │   ├── auth.js           Signed HttpOnly session cookie
+│   ├── backup.js         Backup/restore core (collect, verify, retention)
 │   ├── stats.js          Day/week/month totals and 7-day chart queries
 │   └── schema.js         Loads database/schema.sql for the installer
 ├── database/schema.sql   Tables: users, products, sales, sale_items, stock_movements
@@ -49,6 +50,27 @@ npm run dev              # http://localhost:3000
 
 Needs Node 20.6+ (it uses `node --env-file`).
 
+## Account recovery (forgot owner login)
+
+There is intentionally **no online password reset**. If you forget the owner
+username or password, or the owner row was deleted, click **Forgot Password?**
+on the login page for the recovery steps, then recover on the server
+computer (Windows PowerShell, inside the project folder):
+
+```
+npm run recover            # interactive: reset the owner, or create it if none exists
+npm run recover -- --list  # show account usernames without changing anything
+```
+
+The tool detects whether an owner exists: if one does, it resets that owner's
+password (typing `RESET` to confirm, and offering reactivation if the account
+was deactivated); if none exists, it creates the initial owner (typing
+`CREATE` to confirm, refused if an owner already exists). Passwords are
+hashed with bcrypt, all queries are parameterized, and cashiers, products,
+inventory, and sales are never modified. If the database is unreachable it
+exits with an error and changes nothing — check `DATABASE_URL` and that
+Postgres is running (local Docker: `docker start smartmart-pg`).
+
 ## What changed from the PHP version, and why
 
 - **Installer is locked after first use.** `install.php` was open to anyone. `/api/install` refuses once an admin exists, and you choose the password (no default `admin123`).
@@ -58,6 +80,41 @@ Needs Node 20.6+ (it uses `node --env-file`).
 - **CSV export works.** The PHP query used columns that do not exist (`transaction_no`, a join to `products`). The new export reads `sales` and `sale_items` and honors the report's date and search filters. Cells that start with `=`, `+`, `-` or `@` are escaped.
 - **Product form has a Category field** (the old form skipped it, so everything was "General").
 - **Logins:** failed attempts are slowed down, cookies are `HttpOnly`, `SameSite=Lax` and `Secure`, and write requests must be JSON (blocks cross-site form posts).
+
+## Backup & Restore (owner only)
+
+The **Backup** page (`/backup`, owner-only — cashiers see a restricted page)
+protects all store data: users + password hashes, products, sales, sale items,
+stock movements, plus store/timezone metadata. Backups are portable JSON files
+named `smartmart-backup-YYYYMMDD-HHMMSS-<kind>.json`, checksummed and verified
+before success is reported. No `pg_dump` binary or superuser rights needed.
+
+- **Create:** open `/backup` → **Create Backup**, or on the server run
+  `npm run backup`. Files go to `backups/` (outside `public/`; override with
+  `BACKUP_DIR`). Every restore first writes an automatic `safety` backup.
+- **Download/store safely:** press **Download** (or **Download Backup** for the
+  latest) and copy the file to an external drive or secure cloud storage.
+  Server files alone are not enough — keep one copy off the computer.
+- **Restore:** on `/backup`, pick a server backup or upload a saved file →
+  **Restore Backup** → type `RESTORE` to confirm. The restore is validated,
+  runs in one transaction, is count-verified before commit, and reports a
+  safety-backup file. If your login was replaced, sign in again.
+- **Automatic:** set `BACKUP_AUTO=daily|weekly` in `.env` (keeps 7 daily / 4
+  weekly by default, configurable via `BACKUP_KEEP_DAILY/WEEKLY`; manual and
+  safety backups are never auto-deleted, and the last valid backup is never
+  removed). This needs the local server kept running. For hands-off
+  scheduling on Windows, use Task Scheduler to run `npm run backup -- --kind=daily`
+  daily (works even when the server is off).
+- **Vercel limitation:** Vercel's filesystem is ephemeral, so server-stored
+  backups can vanish — always Download immediately, and use your Postgres
+  host's scheduled backups (Neon/Supabase) as a second safety net.
+- **Safe testing:** test restores against a separate database first
+  (`DATABASE_URL` pointing at a test DB). A restore overwrites newer records.
+- **`pg_dump` alternative (optional):** if you prefer native SQL dumps on
+  Windows, install PostgreSQL (e.g. `winget install PostgreSQL.17`), then run
+  `"C:\Program Files\PostgreSQL\17\bin\pg_dump.exe" "%DATABASE_URL%" -F c -f store.dump`
+  and restore with `pg_restore`. The built-in JSON system above is recommended
+  because it works on Vercel too and needs no extra tools.
 
 ## Notes
 

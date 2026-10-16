@@ -8,6 +8,8 @@ CREATE TABLE IF NOT EXISTS users (
   id          SERIAL PRIMARY KEY,
   username    VARCHAR(50)  NOT NULL UNIQUE,
   password    VARCHAR(255) NOT NULL,
+  role        VARCHAR(20)  NOT NULL DEFAULT 'owner',
+  active      BOOLEAN      NOT NULL DEFAULT TRUE,
   created_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 
@@ -30,6 +32,7 @@ CREATE INDEX IF NOT EXISTS idx_products_stock    ON products (stock);
 CREATE TABLE IF NOT EXISTS sales (
   id               SERIAL PRIMARY KEY,
   transaction_id   VARCHAR(40)   NOT NULL UNIQUE,
+  client_sale_id   VARCHAR(64),
   total_amount     NUMERIC(12,2) NOT NULL DEFAULT 0,
   total_cost       NUMERIC(12,2) NOT NULL DEFAULT 0,
   profit           NUMERIC(12,2) NOT NULL DEFAULT 0,
@@ -42,6 +45,7 @@ CREATE TABLE IF NOT EXISTS sales (
   sale_date        TIMESTAMPTZ   NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_sales_date ON sales (sale_date);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_client_sale_id ON sales (client_sale_id);
 
 CREATE TABLE IF NOT EXISTS sale_items (
   id            SERIAL PRIMARY KEY,

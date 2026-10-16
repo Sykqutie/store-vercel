@@ -10,13 +10,36 @@
     { "source": "/install", "destination": "/html/install.html" },
     { "source": "/dashboard", "destination": "/html/dashboard.html" },
     { "source": "/pos", "destination": "/html/pos.html" },
+    { "source": "/cashier", "destination": "/html/pos.html" },
     { "source": "/products", "destination": "/html/products.html" },
     { "source": "/inventory", "destination": "/html/products.html" },
     { "source": "/edit-product", "destination": "/html/edit-product.html" },
     { "source": "/report", "destination": "/html/report.html" },
-    { "source": "/receipt", "destination": "/html/receipt.html" }
+    { "source": "/receipt", "destination": "/html/receipt.html" },
+    { "source": "/users", "destination": "/html/users.html" },
+    { "source": "/backup", "destination": "/html/backup.html" },
+    { "source": "/forgot-password", "destination": "/html/forgot-password.html" },
+    { "source": "/offline", "destination": "/html/offline.html" }
   ],
   "headers": [
+    {
+      "source": "/sw.js",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-cache" },
+        { "key": "Service-Worker-Allowed", "value": "/" }
+      ]
+    },
+    {
+      "source": "/manifest.webmanifest",
+      "headers": [
+        { "key": "Content-Type", "value": "application/manifest+json" },
+        { "key": "Cache-Control", "value": "public, max-age=86400" }
+      ]
+    },
+    {
+      "source": "/icons/(.*)",
+      "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }]
+    },
     {
       "source": "/(.*)",
       "headers": [

@@ -2,20 +2,30 @@
 (async function () {
   'use strict';
   var A = App, esc = A.esc;
-  var main = await A.mountShell('products');
+  var main = await A.mountShell('products', 'owner');
   if (!main) return;
 
   var id = parseInt(A.qs('id'), 10);
   if (!id) { location.replace('/inventory'); return; }
 
   var p;
+  var offlineItem = false;
   try { p = (await A.api('/products/' + id)).product; }
   catch (e) {
-    main.innerHTML = '<div class="panel pad narrow"><div class="alert">' + esc(e.message) + '</div><p style="margin-top:12px"><a class="btn" href="/inventory">Back to inventory</a></p></div>';
-    return;
+    var net = /Failed to fetch|NetworkError|network|offline|Load failed/i.test(String((e && e.message) || e));
+    if (net && window.LocalDB) {
+      try { p = await window.LocalDB.get('products', id); } catch (x) { p = null; }
+    }
+    if (!p) {
+      main.innerHTML = '<div class="panel pad narrow"><div class="alert">' + esc(e.message) + '</div><p style="margin-top:12px"><a class="btn" href="/inventory">Back to inventory</a></p></div>';
+      return;
+    }
+    offlineItem = true;
   }
 
   main.innerHTML =
+    '<div class="offline-banner" id="offBanner"' + (offlineItem || !A.isOnline() ? '' : ' hidden') + '>' +
+    ((offlineItem || !A.isOnline()) ? '<b>Offline mode.</b> Changes are queued with conflict protection and sync when you reconnect.' : '') + '</div>' +
     '<div class="panel pad narrow"><div class="ph"><h2>Edit inventory item</h2><span class="mono mute">' + esc(p.barcode) + '</span></div>' +
     '<div class="bc-preview"><span class="bc"><svg id="bcSvg" data-code="' + esc(p.barcode) + '" role="img" aria-label="Barcode ' + esc(p.barcode) + '"></svg></span>' +
     '<div class="bc-meta"><span class="mono mute">Scannable at POS · CODE128</span><button class="btn sm" id="printBc" type="button">Print label</button></div></div>' +
@@ -57,16 +67,51 @@
     var err = A.$('#err'), btn = A.$('#save');
     err.hidden = true;
     btn.disabled = true;
+    var fields = {
+      name: A.$('#name').value, category: A.$('#category').value, cost_price: A.$('#cost').value,
+      price: A.$('#price').value, stock: A.$('#stock').value, low_stock_threshold: A.$('#threshold').value
+    };
+    // Offline (or lost connection): queue an adjust op with base_stock for conflict safety.
+    if (!A.isOnline()) {
+      try {
+        if (!window.Sync) throw new Error('Offline queue is unavailable in this browser.');
+        await window.Sync.queueInventoryOp({
+          type: 'adjust', product_id: id, barcode: p.barcode,
+          name: fields.name, category: fields.category, cost_price: fields.cost_price,
+          price: fields.price, stock: Number(fields.stock), low_stock_threshold: Number(fields.low_stock_threshold),
+          base_stock: p.stock
+        });
+        A.toast('Saved offline — will sync when online.');
+        location.href = '/inventory';
+      } catch (ex) {
+        err.textContent = ex.message;
+        err.hidden = false;
+        btn.disabled = false;
+      }
+      return;
+    }
     try {
       await A.api('/products/' + id, {
         method: 'PUT',
-        body: {
-          name: A.$('#name').value, category: A.$('#category').value, cost_price: A.$('#cost').value,
-          price: A.$('#price').value, stock: A.$('#stock').value, low_stock_threshold: A.$('#threshold').value
-        }
+        body: Object.assign({}, fields, { base_stock: p.stock })
       });
+      if (window.StockAlerts) { try { window.StockAlerts.notifyChanged(); } catch (x) {} }
       location.href = '/inventory';
     } catch (ex) {
+      var net = /Failed to fetch|NetworkError|network|offline|Load failed/i.test(String((ex && ex.message) || ex));
+      if (net && window.Sync) {
+        try {
+          await window.Sync.queueInventoryOp({
+            type: 'adjust', product_id: id, barcode: p.barcode,
+            name: fields.name, category: fields.category, cost_price: fields.cost_price,
+            price: fields.price, stock: Number(fields.stock), low_stock_threshold: Number(fields.low_stock_threshold),
+            base_stock: p.stock
+          });
+          A.toast('Connection lost — change queued for sync.', true);
+          location.href = '/inventory';
+          return;
+        } catch (qx) { /* fall through to error display */ }
+      }
       err.textContent = ex.message;
       err.hidden = false;
       btn.disabled = false;

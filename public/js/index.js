@@ -1,7 +1,7 @@
-/* Entry point: send signed-in users to the dashboard, everyone else to login (same as index.php). */
+/* Entry point: owners to the dashboard, cashiers to POS, everyone else to login. */
 (function () {
   'use strict';
   App.api('/me', { noRedirect: true })
-    .then(function () { location.replace('/dashboard'); })
+    .then(function (me) { location.replace(me && me.role === 'cashier' ? '/pos' : '/dashboard'); })
     .catch(function () { location.replace('/login'); });
 })();

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Offline · Convenience Store POS</title>
+<meta name="theme-color" content="#070D19">
+<meta name="description" content="Convenience Store POS works offline. Reconnect to sync.">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/logo.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icons/smartmart-apple-touch-icon.png">
+<link rel="stylesheet" href="/css/base.css">
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<div class="app" id="root">
+  <div class="auth-wrap"><div class="panel auth">
+    <img src="/logo-full.svg" alt="Store POS" width="210" style="align-self:center;max-width:100%;height:auto">
+    <h1>OFF<span style="color:var(--cyan)">LINE</span></h1>
+    <p>You are offline. Cached pages (Dashboard, POS, Inventory) still open. Queued sales sync when you reconnect.</p>
+    <div class="btn-row" style="justify-content:center">
+      <a class="btn primary" href="/pos">Open POS</a>
+      <a class="btn" href="/dashboard">Dashboard</a>
+      <a class="btn" href="/inventory">Inventory</a>
+    </div>
+  </div></div>
+</div>
+<script src="/js/pwa.js"></script>
+</body>
+</html>

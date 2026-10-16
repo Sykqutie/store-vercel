@@ -1,14 +1,21 @@
-/* Inventory (replaces product.php): add or restock on the left, inventory table on the right. */
+/* Inventory (owner only): add/restock table, queued restocks, outbox sync.
+   Cashiers never reach this page — mountShell('products', 'owner') shows
+   them a restricted page, their tabs only list POS, and the API rejects
+   their inventory writes with 403. POS-only cashier accounts. */
 (async function () {
   'use strict';
   var A = App, esc = A.esc, money = A.money;
-  var main = await A.mountShell('products');
+  var main = await A.mountShell('products', 'owner');
   if (!main) return;
 
   var status = A.qs('status') === 'low' ? 'low' : A.qs('status') === 'out' ? 'out' : '';
   var timer;
+  var all = [];
+  var offlineMode = !A.isOnline();
+  var sortKey = 'name', sortDir = 1;
 
   main.innerHTML =
+    '<div class="offline-banner" id="offBanner" hidden></div>' +
     '<div class="two">' +
     '<div class="panel pad"><div class="ph"><h2>Add / restock inventory item</h2></div>' +
     '<form id="f" class="stack">' +
@@ -21,13 +28,31 @@
     '<label for="threshold">Low stock alert at<input id="threshold" type="number" step="1" min="0" value="5" required></label></div>' +
     '<div class="note">Saving an existing barcode adds the quantity to its stock and updates the details.</div>' +
     '<div class="alert" id="err" hidden></div>' +
-    '<button class="btn primary wide" id="save" type="submit">Save inventory item</button></form></div>' +
-    '<div class="panel pad"><div class="ph"><h2>Inventory</h2><span class="mono mute" id="count"></span></div>' +
+    '<button class="btn primary wide" id="save" type="submit">Save inventory item</button></form>' +
+    '<div class="panel pad" id="queuePanel" style="margin-top:14px"><div class="ph"><h2>Queued inventory changes</h2><span class="mono mute" id="queueMeta"></span></div>' +
+    '<div class="btn-row" style="margin-bottom:10px"><button class="btn sm" id="syncNow" type="button">Sync now</button></div>' +
+    '<div id="queueList"><div class="empty">No queued changes.</div></div></div></div>' +
+    '<div class="panel pad"><div class="ph"><h2>Inventory</h2><span class="inv-meta"><span class="mono mute" id="count"></span><span class="mono lk-total" id="invValue" aria-live="polite"></span></span></div>' +
     '<div class="toolbar"><input id="q" type="search" placeholder="Search name, barcode or category" aria-label="Search inventory">' +
     '<div class="chips" id="chips"></div></div>' +
-    '<div class="tw"><table><thead><tr><th>Barcode (scan)</th><th>Name</th><th class="n">Cost</th><th class="n">Price</th><th>Stock</th><th>Status</th><th></th></tr></thead><tbody id="body"></tbody></table></div></div></div>';
+    '<div class="tw"><table id="invTable"><thead><tr><th>Barcode (scan)</th><th class="sortable" data-sort="name" role="columnheader">Name <span class="sort-ind" data-ind="name"></span></th><th class="n">Cost</th><th class="n sortable" data-sort="price" role="columnheader">Price <span class="sort-ind" data-ind="price"></span></th><th class="sortable" data-sort="stock" role="columnheader">Stock <span class="sort-ind" data-ind="stock"></span></th><th>Status</th><th></th></tr></thead><tbody id="body"></tbody></table></div>' +
+    '</div></div>';
 
   var body = A.$('#body'), err = A.$('#err');
+  var banner = A.$('#offBanner'), queueList = A.$('#queueList'), queueMeta = A.$('#queueMeta');
+
+  var netErr = function (e) { return /Failed to fetch|NetworkError|network|offline|Load failed/i.test(String((e && e.message) || e)); };
+
+  function paintBanner() {
+    offlineMode = !A.isOnline();
+    if (offlineMode) {
+      banner.hidden = false;
+      banner.innerHTML = '<b>Offline mode.</b> Showing cached inventory. New restocks are queued and sync when you reconnect.';
+    } else {
+      banner.hidden = true;
+      banner.innerHTML = '';
+    }
+  }
 
   function chips() {
     A.$('#chips').innerHTML = [['', 'All'], ['low', 'Low stock'], ['out', 'Out of stock']].map(function (c) {
@@ -35,20 +60,26 @@
     }).join('');
   }
 
+  function paintSvg(svg) {
+    if (!window.JsBarcode || !svg) return false;
+    try {
+      window.JsBarcode(svg, svg.getAttribute('data-code'), {
+        format: 'CODE128', width: 1.6, height: 44, margin: 6,
+        displayValue: false, background: '#ffffff', lineColor: '#000000'
+      });
+      return true;
+    } catch (e) {
+      var span = document.createElement('span');
+      span.className = 'mono';
+      span.textContent = svg.getAttribute('data-code');
+      svg.replaceWith(span);
+      return false;
+    }
+  }
+
   function paintBarcodes() {
-    if (!window.JsBarcode) return;
     Array.prototype.forEach.call(body.querySelectorAll('svg.jsbarcode'), function (svg) {
-      try {
-        window.JsBarcode(svg, svg.getAttribute('data-code'), {
-          format: 'CODE128', width: 1.6, height: 44, margin: 6,
-          displayValue: false, background: '#ffffff', lineColor: '#000000'
-        });
-      } catch (e) {
-        var span = document.createElement('span');
-        span.className = 'mono';
-        span.textContent = svg.getAttribute('data-code');
-        svg.replaceWith(span);
-      }
+      paintSvg(svg);
     });
   }
 
@@ -74,28 +105,122 @@
     return s;
   }
 
+  function filtered() {
+    var q = A.$('#q').value.trim().toLowerCase();
+    var list = all.filter(function (p) {
+      if (status === 'low' && !(p.stock <= p.low_stock_threshold)) return false;
+      if (status === 'out' && !(p.stock <= 0)) return false;
+      if (q && String(p.name).toLowerCase().indexOf(q) < 0 && String(p.barcode).toLowerCase().indexOf(q) < 0 && String(p.category).toLowerCase().indexOf(q) < 0) return false;
+      return true;
+    });
+    var dir = sortDir;
+    list.sort(function (a, b) {
+      var x = a[sortKey], y = b[sortKey];
+      if (typeof x === 'string') x = x.toLowerCase();
+      if (typeof y === 'string') y = y.toLowerCase();
+      if (x < y) return -dir;
+      if (x > y) return dir;
+      return 0;
+    });
+    return list;
+  }
+
+  function paintInvValue(list) {
+    var el = A.$('#invValue');
+    if (!el) return;
+    var total = 0;
+    for (var i = 0; i < list.length; i++) total += Number(list[i].price || 0) * Number(list[i].stock || 0);
+    el.textContent = '· Value ' + money(total);
+    el.title = 'Total retail value of listed items in Philippine pesos';
+  }
+
+  function render() {
+    var list = filtered();
+    A.$('#count').textContent = list.length + ' items' + (offlineMode ? ' (cached)' : '');
+    paintInvValue(list);
+    Array.prototype.forEach.call(document.querySelectorAll('[data-ind]'), function (s) {
+      s.textContent = s.getAttribute('data-ind') === sortKey ? (sortDir > 0 ? '▲' : '▼') : '';
+    });
+    A.$('#body')._products = list;
+    body.innerHTML = list.length ? list.map(function (p) {
+      var low = p.stock <= p.low_stock_threshold;
+      var badge = p.stock <= 0 ? '<span class="pill out">Out of stock</span>'
+        : low ? '<span class="pill low">Low · ' + p.stock + '</span>'
+        : '<span class="pill ok">' + p.stock + '</span>';
+      return '<tr class="' + (low ? 'row-low' : '') + '"><td><span class="bc"><svg class="jsbarcode" data-code="' + esc(p.barcode) + '" role="img" aria-label="Barcode ' + esc(p.barcode) + '"></svg></span>' +
+        '<span class="mono mute" style="font-size:11px">' + esc(p.barcode) + '</span></td>' +
+        '<td><b>' + esc(p.name) + '</b><span class="sub">' + esc(p.category) + '</span></td>' +
+        '<td class="n mono mute">' + money(p.cost_price) + '</td><td class="n mono">' + money(p.price) + '</td>' +
+        '<td class="mono"><b>' + p.stock + '</b></td><td>' + badge + '</td>' +
+        '<td><div class="acts">' +
+        '<a class="btn sm" href="/edit-product?id=' + p.id + '">Edit</a><button class="btn sm" type="button" data-label="' + p.id + '">Label</button><button class="btn sm danger" type="button" data-del="' + p.id + '" aria-label="Delete ' + esc(p.name) + '">Delete</button>' +
+        '</div></td></tr>';
+    }).join('') : '<tr><td colspan="7" class="empty">No inventory items found' + (offlineMode ? ' in cache' : '') + '.</td></tr>';
+    paintBarcodes();
+  }
+
+  function renderQueue() {
+    if (!window.Sync || !queueList) return;
+    window.Sync.getInventoryQueue().then(function (q) {
+      if (queueMeta) queueMeta.textContent = q.length ? q.length + ' queued' : '';
+      if (!q.length) {
+        queueList.innerHTML = '<div class="empty">No queued changes. Offline restocks appear here with Pending / Failed status.</div>';
+        return;
+      }
+      queueList.innerHTML = '<div class="pend-list">' + q.map(function (r) {
+        var pill = r.status === 'failed' ? '<span class="pill out">Failed</span>' : '<span class="pill low">Pending</span>';
+        var desc = r.type === 'adjust'
+          ? 'Set stock to <b>' + r.stock + '</b> · ' + esc(r.name)
+          : 'Add <b>+' + r.stock + '</b> · ' + esc(r.name) + ' (' + esc(r.barcode) + ')';
+        var e = r.last_error ? '<div class="mono down" style="font-size:12px">' + esc(r.last_error) + '</div>' : '';
+        return '<div class="pend"><div>' + pill + ' <span>' + desc + '</span></div>' + e +
+          '<div class="acts">' +
+          (r.status === 'failed' ? '<button class="btn sm" type="button" data-retry="' + r.qid + '">Retry</button>' : '') +
+          '<button class="btn sm" type="button" data-discard="' + r.qid + '">Discard</button></div></div>';
+      }).join('') + '</div>';
+    }).catch(function () { /* optional */ });
+  }
+
   async function load() {
-    var url = '/products?status=' + status + '&q=' + encodeURIComponent(A.$('#q').value.trim());
     try {
-      var r = await A.api(url);
-      A.$('#count').textContent = r.products.length + ' items';
-      A.$('#body')._products = r.products;
-      body.innerHTML = r.products.length ? r.products.map(function (p) {
-        var low = p.stock <= p.low_stock_threshold;
-        var badge = p.stock <= 0 ? '<span class="pill out">Out of stock</span>'
-          : low ? '<span class="pill low">Low · ' + p.stock + '</span>'
-          : '<span class="pill ok">' + p.stock + '</span>';
-        return '<tr class="' + (low ? 'row-low' : '') + '"><td><span class="bc"><svg class="jsbarcode" data-code="' + esc(p.barcode) + '" role="img" aria-label="Barcode ' + esc(p.barcode) + '"></svg></span>' +
-          '<span class="mono mute" style="font-size:11px">' + esc(p.barcode) + '</span></td>' +
-          '<td><b>' + esc(p.name) + '</b><span class="sub">' + esc(p.category) + '</span></td>' +
-          '<td class="n mono mute">' + money(p.cost_price) + '</td><td class="n mono">' + money(p.price) + '</td>' +
-          '<td class="mono"><b>' + p.stock + '</b></td><td>' + badge + '</td>' +
-          '<td><div class="acts"><a class="btn sm" href="/edit-product?id=' + p.id + '">Edit</a><button class="btn sm" type="button" data-label="' + p.id + '">Label</button></div></td></tr>';
-      }).join('') : '<tr><td colspan="7" class="empty">No inventory items found.</td></tr>';
-      paintBarcodes();
+      var r = await A.api('/products');
+      all = r.products;
+      offlineMode = false;
+      if (window.LocalDB) {
+        try { await window.LocalDB.saveProducts(all); } catch (e) { /* best-effort */ }
+      }
     } catch (e) {
-      body.innerHTML = '<tr><td colspan="7"><div class="alert">' + esc(e.message) + '</div></td></tr>';
+      if (netErr(e) && window.LocalDB) {
+        try { all = await window.LocalDB.loadProducts(); } catch (x) { all = []; }
+        if (!all.length) throw e;
+        offlineMode = true;
+        A.toast('Offline — showing cached inventory.', true);
+      } else {
+        throw e;
+      }
     }
+    paintBanner();
+    render();
+    renderQueue();
+  }
+
+  async function queueOfflineOp(fields) {
+    if (!window.Sync) throw new Error('Offline queue is unavailable in this browser.');
+    var rec = await window.Sync.queueInventoryOp({
+      type: 'restock',
+      barcode: fields.barcode, name: fields.name, category: fields.category,
+      cost_price: fields.cost_price, price: fields.price,
+      stock: fields.stock, low_stock_threshold: fields.threshold
+    });
+    // Optimistic local update for existing barcodes (prevents oversell display).
+    var hit = all.filter(function (p) { return String(p.barcode) === String(fields.barcode); })[0];
+    if (hit && window.LocalDB) {
+      hit.stock = Number(hit.stock || 0) + Number(fields.stock || 0);
+      try { await window.LocalDB.put('products', hit); } catch (e) { /* ignore */ }
+      render();
+    }
+    renderQueue();
+    return rec;
   }
 
   A.$('#chips').addEventListener('click', function (e) {
@@ -103,11 +228,15 @@
     if (!b) return;
     status = b.dataset.s;
     chips();
-    load();
+    render();
   });
-  A.$('#q').addEventListener('input', function () { clearTimeout(timer); timer = setTimeout(load, 250); });
-  A.$('#gen').addEventListener('click', function () { A.$('#barcode').value = genBarcode(); A.$('#barcode').focus(); });
+  A.$('#q').addEventListener('input', function () { clearTimeout(timer); timer = setTimeout(render, 150); });
+  var genBtn = A.$('#gen');
+  if (genBtn) genBtn.addEventListener('click', function () { A.$('#barcode').value = genBarcode(); A.$('#barcode').focus(); });
+
   body.addEventListener('click', function (e) {
+    var del = e.target.closest('[data-del]');
+    if (del) { askDelete(Number(del.getAttribute('data-del'))); return; }
     var b = e.target.closest('[data-label]');
     if (!b) return;
     var list = A.$('#body')._products || [];
@@ -115,25 +244,101 @@
     for (var i = 0; i < list.length; i++) if (String(list[i].id) === b.getAttribute('data-label')) found = list[i];
     if (found) printLabel(found);
   });
+  var invHead = document.querySelector('#invTable thead');
+  if (invHead) invHead.addEventListener('click', function (e) {
+    var th = e.target.closest('[data-sort]');
+    if (!th) return;
+    var key = th.getAttribute('data-sort');
+    if (sortKey === key) sortDir = -sortDir;
+    else { sortKey = key; sortDir = 1; }
+    render();
+  });
 
-  A.$('#f').addEventListener('submit', async function (e) {
+  function askDelete(id) {
+    var list = A.$('#body')._products || [];
+    var found = null;
+    for (var i = 0; i < list.length; i++) if (Number(list[i].id) === id) found = list[i];
+    if (!found) return;
+    if (!A.isOnline()) { A.toast('Delete needs a connection.', true); return; }
+    var ov = document.createElement('div');
+    ov.className = 'overlay open';
+    ov.innerHTML = '<div class="sheet" role="alertdialog" aria-modal="true" aria-label="Delete product">' +
+      '<h3>Delete product?</h3>' +
+      '<p>Remove <b>' + esc(found.name) + '</b> (' + esc(found.barcode) + ') from inventory? Past sales records keep the product name and are not affected. This cannot be undone.</p>' +
+      '<div class="mact"><button class="btn" type="button" data-x="cancel">Cancel</button>' +
+      '<button class="btn danger" type="button" data-x="yes">Delete</button></div>' +
+      '<div class="err" id="delErr"></div></div>';
+    document.body.appendChild(ov);
+    var done = false;
+    function close() { if (!done) { done = true; ov.remove(); } }
+    ov.addEventListener('click', function (ev) {
+      var x = ev.target.closest('[data-x]');
+      if (!x && ev.target !== ov) return;
+      if (!x || x.getAttribute('data-x') === 'cancel') { close(); return; }
+      x.disabled = true;
+      A.api('/products/' + id, { method: 'DELETE', body: {} }).then(function () {
+        close();
+        A.toast('Deleted ' + found.name);
+        load().then(function () {
+          if (window.StockAlerts) { try { window.StockAlerts.notifyChanged(); } catch (e) {} }
+        }).catch(function () {});
+      }).catch(function (ex) {
+        var m = ov.querySelector('#delErr');
+        if (m) m.textContent = ex.message;
+        x.disabled = false;
+      });
+    });
+    document.addEventListener('keydown', function esc2(ev) {
+      if (ev.key === 'Escape') { close(); document.removeEventListener('keydown', esc2); }
+    });
+  }
+
+  var formEl = A.$('#f');
+  if (formEl) formEl.addEventListener('submit', async function (e) {
     e.preventDefault();
     err.hidden = true;
     var btn = A.$('#save');
     btn.disabled = true;
+    var fields = {
+      barcode: A.$('#barcode').value, name: A.$('#name').value, category: A.$('#category').value,
+      cost_price: A.$('#cost').value, price: A.$('#price').value,
+      stock: A.$('#stock').value, threshold: A.$('#threshold').value
+    };
     try {
-      var r = await A.api('/products', {
-        body: {
-          barcode: A.$('#barcode').value, name: A.$('#name').value, category: A.$('#category').value,
-          cost_price: A.$('#cost').value, price: A.$('#price').value,
-          stock: A.$('#stock').value, low_stock_threshold: A.$('#threshold').value
+      if (!A.isOnline()) {
+        await queueOfflineOp({ barcode: fields.barcode, name: fields.name, category: fields.category, cost_price: fields.cost_price, price: fields.price, stock: Number(fields.stock || 0), low_stock_threshold: Number(fields.threshold || 5) });
+        A.toast('Saved offline — will sync when online.');
+        A.$('#f').reset();
+        A.$('#category').value = 'General';
+        A.$('#threshold').value = '5';
+        await renderQueue();
+      } else {
+        try {
+          var r = await A.api('/products', {
+            body: {
+              barcode: fields.barcode, name: fields.name, category: fields.category,
+              cost_price: fields.cost_price, price: fields.price,
+              stock: fields.stock, low_stock_threshold: fields.threshold
+            }
+          });
+          A.toast(r.created ? 'Inventory item added' : 'Inventory item restocked');
+          A.$('#f').reset();
+          A.$('#category').value = 'General';
+          A.$('#threshold').value = '5';
+          await load();
+          if (window.StockAlerts) { try { window.StockAlerts.notifyChanged(); } catch (x) {} }
+        } catch (ex) {
+          if (netErr(ex)) {
+            await queueOfflineOp({ barcode: fields.barcode, name: fields.name, category: fields.category, cost_price: fields.cost_price, price: fields.price, stock: Number(fields.stock || 0), low_stock_threshold: Number(fields.threshold || 5) });
+            A.toast('Connection lost — queued for sync.', true);
+            A.$('#f').reset();
+            A.$('#category').value = 'General';
+            A.$('#threshold').value = '5';
+          } else {
+            throw ex;
+          }
         }
-      });
-      A.toast(r.created ? 'Inventory item added' : 'Inventory item restocked');
-      A.$('#f').reset();
-      A.$('#category').value = 'General';
-      A.$('#threshold').value = '5';
-      await load();
+      }
     } catch (ex) {
       err.textContent = ex.message;
       err.hidden = false;
@@ -141,7 +346,60 @@
     btn.disabled = false;
   });
 
+  var syncBtn = A.$('#syncNow');
+  if (syncBtn) syncBtn.addEventListener('click', function () {
+    if (!window.Sync) return;
+    var b = syncBtn;
+    b.disabled = true;
+    window.Sync.syncNow().then(function (r) {
+      b.disabled = false;
+      renderQueue();
+      if (r && r.offline) { A.toast('Still offline — kept in queue.', true); return; }
+      if (r && (r.synced || r.failed)) {
+        A.toast('Sync: ' + r.synced + ' synced, ' + r.failed + ' failed.', r.failed > 0);
+        load().catch(function () {});
+      } else {
+        A.toast('Everything is already synced.');
+      }
+    }).catch(function (ex) { b.disabled = false; A.toast(ex.message, true); });
+  });
+  if (queueList) queueList.addEventListener('click', function (e) {
+    var retry = e.target.closest('[data-retry]');
+    var disc = e.target.closest('[data-discard]');
+    if (!window.Sync) return;
+    if (retry) {
+      window.Sync.retryInventory(Number(retry.getAttribute('data-retry'))).then(function () { renderQueue(); load().catch(function () {}); }).catch(function (ex) { A.toast(ex.message, true); });
+    }
+    if (disc) {
+      if (!window.confirm('Discard this queued change?')) return;
+      window.Sync.discardInventory(Number(disc.getAttribute('data-discard'))).then(function () { renderQueue(); load().catch(function () {}); }).catch(function (ex) { A.toast(ex.message, true); });
+    }
+  });
+  function showLoadError(msg) {
+    body.innerHTML = '<tr><td colspan="7"><div class="alert">' + esc(msg) + '</div></td></tr>';
+  }
+  window.addEventListener('online', function () { paintBanner(); load().catch(function (e) { showLoadError(e.message); }); });
+  window.addEventListener('offline', function () { paintBanner(); render(); });
+  window.addEventListener('sync-changed', function () { renderQueue(); });
+  window.addEventListener('app-refresh', function () { load().then(function () { A.noteRefreshed(); }).catch(function () { A.noteRefreshed(); }); });
+  // Returning from POS (same-tab back navigation) can restore a stale page:
+  // reload so stock is always fresh. Throttled focus refresh covers the rest.
+  window.addEventListener('pageshow', function (e) { if (e.persisted) location.reload(); });
+  var lastFocusLoad = Date.now();
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden && A.isOnline() && Date.now() - lastFocusLoad > 60000) {
+      lastFocusLoad = Date.now();
+      load().catch(function () { /* keep current list */ });
+    }
+  });
+
   chips();
-  await load();
+  paintBanner();
+  try {
+    await load();
+  } catch (e) {
+    showLoadError(e.message);
+  }
+  renderQueue();
   A.reveal(main);
 })();

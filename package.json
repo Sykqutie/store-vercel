@@ -6,7 +6,10 @@
   "engines": { "node": ">=20" },
   "scripts": {
     "dev": "node --env-file=.env dev.js",
-    "start": "node --env-file=.env dev.js"
+    "start": "node --env-file=.env dev.js",
+    "recover": "node --env-file=.env scripts/recover-owner.js",
+    "backup": "node --env-file=.env scripts/backup.js create",
+    "backup:list": "node --env-file=.env scripts/backup.js list"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
