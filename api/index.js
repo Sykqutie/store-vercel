@@ -158,22 +158,25 @@ api.get('/status', wrap(async (req, res) => {
     return res.json({ configured: false, installed: false, env });
   }
   const authSecret = !!process.env.AUTH_SECRET && process.env.AUTH_SECRET.length >= 16;
+  // Hostname only (no credentials) — lets the owner spot a typo/placeholder
+  // like "host" without ever exposing user, password, or database name.
+  const dbHost = typeof db.publicHost === 'function' ? db.publicHost() : null;
   try {
     const { rows: [r] } = await db.query('SELECT COUNT(*)::int AS n FROM users');
-    res.json({ configured: true, authSecret, installed: r.n > 0, env });
+    res.json({ configured: true, authSecret, installed: r.n > 0, env, dbHost });
   } catch (e) {
-    if (e.code === '42P01') return res.json({ configured: true, authSecret, installed: false, env });
+    if (e.code === '42P01') return res.json({ configured: true, authSecret, installed: false, env, dbHost });
     console.error(e);
-    // Safe, specific hint: error codes only, never the URL, password, or host.
+    // Safe, specific hint: error codes + hostname only, never the URL, password, or db name.
     const code = String(e.code || '');
     let dbError = 'Could not reach the database. Check DATABASE_URL.';
     if (code === '28P01') dbError = 'Database login failed (wrong user/password in DATABASE_URL). Copy a fresh pooled connection string from Neon/Supabase and update the Vercel env var, then redeploy.';
     else if (code === '3D000') dbError = 'Database name in DATABASE_URL does not exist. Check the dbname part of the URL.';
-    else if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') dbError = 'Database host not found (DNS). The hostname in DATABASE_URL is wrong — copy the pooled host again (Neon pooled hosts contain "-pooler").';
+    else if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') dbError = 'Database host not found (DNS)' + (dbHost ? ' — the app sees host "' + dbHost + '".' : '.') + ' Copy the pooled connection string again from your Neon project (Neon pooled hosts contain "-pooler").';
     else if (code === 'ECONNREFUSED') dbError = 'Database refused the connection. Wrong host/port, or the Neon compute is paused — open the Neon console once to resume, then retry /api/status.';
     else if (code === 'ETIMEDOUT' || /timeout/i.test(e.message || '')) dbError = 'Database connection timed out (cold start or wrong region/host). Retry /api/status once — Neon free-tier wake-up can exceed the first attempt — and confirm the pooled URL + function region near the DB.';
     else if (/password.*must.*be.*url-encoded|SASL|SCRAM/i.test(e.message || '')) dbError = 'Database password looks mis-encoded. Percent-encode @ / : # ? & in the password part of DATABASE_URL.';
-    res.json({ configured: true, authSecret, installed: false, env, dbError, dbCode: code || undefined });
+    res.json({ configured: true, authSecret, installed: false, env, dbHost, dbError, dbCode: code || undefined });
   }
 }));
 
