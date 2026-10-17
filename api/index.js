@@ -97,6 +97,16 @@ function ensureAccountColumns() {
         // Table may not exist yet (pre-install). The installer retries after creating tables.
         console.error('account migration deferred:', e.message);
         accountMigration = null;
+        return;
+      }
+      // Logins are case-insensitive (see POST /login). Keep the data consistent
+      // with a unique index on lower(username) so "Owner" and "owner" cannot both
+      // be created. Best-effort: a pre-existing case-only duplicate would make
+      // this fail, which must not break the app - log and carry on.
+      try {
+        await db.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_lower ON users (lower(username))');
+      } catch (e) {
+        console.error('username case-insensitive index deferred:', e.message);
       }
     })();
   }
@@ -211,19 +221,74 @@ api.post('/install', wrap(async (req, res) => {
   res.json({ ok: true, seeded });
 }));
 
+// Classify a stored password value WITHOUT exposing it. Only the algorithm
+// family is returned, never the hash itself, so it is safe to log.
+function passwordHashKind(stored) {
+  const s = String(stored || '');
+  if (/^\$2[abxy]\$\d{2}\$/.test(s)) return 'bcrypt';
+  if (/^\$argon2/.test(s)) return 'argon2';
+  if (/^[a-f0-9]{32}$/i.test(s)) return 'md5';
+  if (/^[a-f0-9]{40}$/i.test(s)) return 'sha1';
+  if (/^[a-f0-9]{64}$/i.test(s)) return 'sha256';
+  if (!s) return 'empty';
+  return 'unknown';
+}
+
+// bcryptjs understands $2a/$2b/$2y, but normalising the legacy PHP prefix to
+// $2a avoids any version-specific quirks. The salt and digest are unchanged.
+const normalizeBcrypt = (hash) => String(hash || '').replace(/^\$2[by]\$/, '$2a$');
+
+// Look up an account by username, case-insensitively (matches the original
+// PHP/MySQL utf8mb4_unicode_ci behaviour; Postgres equality is case-sensitive).
+// If the schema predates the role/active columns (partial migration), the
+// 42703 error triggers the migration once and the lookup is retried.
+async function findAccountByUsername(username) {
+  const sql = 'SELECT id, username, password, role, active FROM users WHERE lower(username) = lower($1)';
+  try {
+    const { rows: [u] } = await db.query(sql, [username]);
+    return u || null;
+  } catch (e) {
+    if (e.code === '42703') {
+      await ensureAccountColumns();
+      const { rows: [u] } = await db.query(sql, [username]);
+      return u || null;
+    }
+    throw e;
+  }
+}
+
 api.post('/login', wrap(async (req, res) => {
   const username = String(req.body.username || '').trim();
   const password = String(req.body.password || '');
   if (!username || !password) return bad(res, 'Please enter your username and password.');
 
-  const { rows: [u] } = await db.query('SELECT id, username, password, role, active FROM users WHERE username = $1', [username]);
-  const ok = u ? await bcrypt.compare(password, u.password) : (await bcrypt.compare(password, DUMMY_HASH), false);
+  // Case-insensitive lookup (see helper) with a retry if the schema was only
+  // partially migrated. This keeps login working on older/imported databases.
+  const u = await findAccountByUsername(username);
+  const kind = u ? passwordHashKind(u.password) : null;
+  let ok = false;
+  if (u && kind === 'bcrypt') {
+    ok = await bcrypt.compare(password, u.password.replace(/^\$2[xy]\$/, '$2a$'));
+  } else if (u) {
+    ok = false;
+  } else {
+    await bcrypt.compare(password, DUMMY_HASH);
+    ok = false;
+  }
   if (!ok) {
+    // Server-side diagnostics without secrets: never log the password or hash.
+    if (!u) console.warn('[auth] login rejected: no account for username %j', username);
+    else if (kind !== 'bcrypt') console.warn('[auth] login rejected: account %j has an incompatible password hash (%s) - a reset is required', u.username, kind);
+    else console.warn('[auth] login rejected: wrong password for username %j', u.username);
     await new Promise((r) => setTimeout(r, 400));
     return bad(res, 'Invalid username or password.', 401);
   }
-  if (u.active === false) return bad(res, 'This account is deactivated. Ask the store owner.', 403);
+  if (u.active === false) {
+    console.warn('[auth] login rejected: account deactivated for username %j', u.username);
+    return bad(res, 'This account is deactivated. Ask the store owner.', 403);
+  }
   auth.setSession(res, u);
+  console.log('[auth] login ok: username %j role %j', u.username, u.role === 'cashier' ? 'cashier' : 'owner');
   res.json({ username: u.username, role: u.role === 'cashier' ? 'cashier' : 'owner' });
 }));
 

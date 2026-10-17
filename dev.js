@@ -2,6 +2,34 @@
 // Local development server: same pages and API as the Vercel deployment.
 //   cp .env.example .env   (fill in DATABASE_URL and AUTH_SECRET)
 //   npm install && npm run dev
+//
+// Load .env here as well, BEFORE the API module reads any environment value.
+// The npm scripts already pass --env-file=.env, but running `node dev.js`
+// directly would otherwise start with no DATABASE_URL and every login would
+// fail. Real environment variables always win, so an explicitly exported
+// Neon URL is never overwritten by the local file.
+(function loadEnvFile() {
+  if (process.env.VERCEL) return;
+  const fs = require('fs');
+  const pathMod = require('path');
+  const file = pathMod.join(__dirname, '.env');
+  try {
+    const text = fs.readFileSync(file, 'utf8');
+    for (const raw of text.split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line || line.charAt(0) === '#') continue;
+      const eq = line.indexOf('=');
+      if (eq < 1) continue;
+      const key = line.slice(0, eq).trim();
+      if (!key || key in process.env) continue;
+      let val = line.slice(eq + 1).trim();
+      if ((val.charAt(0) === '"' && val.slice(-1) === '"') || (val.charAt(0) === "'" && val.slice(-1) === "'")) {
+        val = val.slice(1, -1);
+      }
+      process.env[key] = val;
+    }
+  } catch (_) { /* no .env file: rely on the real environment variables */ }
+})();
 const express = require('express');
 const path = require('path');
 const app = require('./api/index.js');

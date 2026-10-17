@@ -91,6 +91,20 @@ function askSecret(prompt) {
 const validUsername = (u) => typeof u === 'string' && u.trim().length >= 3 && u.trim().length <= 50;
 const validPassword = (p) => typeof p === 'string' && p.length >= 8 && p.length <= 72;
 
+// Classify a stored password WITHOUT printing it. Only the algorithm family is
+// returned, so it is safe to show in the audit output. Anything that is not a
+// bcrypt hash cannot be verified by the app and must be reset.
+function hashKind(stored) {
+  const s = String(stored || '');
+  if (/^\$2[abxy]\$\d{2}\$/.test(s)) return 'bcrypt (ok)';
+  if (/^\$argon2/.test(s)) return 'argon2 (INCOMPATIBLE - reset needed)';
+  if (/^[a-f0-9]{32}$/i.test(s)) return 'md5 (INCOMPATIBLE - reset needed)';
+  if (/^[a-f0-9]{40}$/i.test(s)) return 'sha1 (INCOMPATIBLE - reset needed)';
+  if (/^[a-f0-9]{64}$/i.test(s)) return 'sha256 (INCOMPATIBLE - reset needed)';
+  if (!s) return 'empty (INCOMPATIBLE - reset needed)';
+  return 'unknown format (INCOMPATIBLE - reset needed)';
+}
+
 function dbHint(e) {
   const code = e && e.code;
   if (code === 'ECONNREFUSED' || code === 'ENOTFOUND' || code === 'ETIMEDOUT' || /timeout/i.test(e.message || '')) {
@@ -122,12 +136,40 @@ async function listOwners() {
 }
 
 async function doList() {
-  const owners = await listOwners();
-  const { rows: [c] } = await db.query('SELECT COUNT(*)::int AS n FROM users WHERE role = $1', ['cashier']);
-  console.log('Owner account(s): ' + (owners.length
-    ? owners.map((o) => o.username + (o.active ? '' : ' [deactivated]')).join(', ')
-    : '(none)'));
-  console.log('Cashier account(s): ' + c.n + ' (never modified by this tool)');
+  // Full, read-only audit of the actual accounts. Never prints passwords or
+  // hashes - only usernames, roles, active flag, and the hash FORMAT.
+  const { rows } = await db.query(
+    'SELECT id, username, role, active, created_at, password FROM users ORDER BY id ASC'
+  );
+  if (rows.length === 0) {
+    console.log('No accounts found. The database is installed but has no users.');
+    console.log('Run `npm run recover` (no flags) to create the initial owner.');
+    return;
+  }
+  console.log('Accounts found: ' + rows.length);
+  for (const u of rows) {
+    console.log('  - username=' + JSON.stringify(u.username) +
+      '  role=' + JSON.stringify(u.role) +
+      '  ' + (u.active === false ? 'DEACTIVATED' : 'active') +
+      '  password=' + hashKind(u.password));
+  }
+  const ownerCount = rows.filter((u) => OWNER_ROLES.includes(u.role)).length;
+  const cashierCount = rows.filter((u) => u.role === 'cashier').length;
+  console.log('Summary: owners=' + ownerCount + ' cashiers=' + cashierCount +
+    ' other=' + (rows.length - ownerCount - cashierCount));
+
+  const dups = await db.query(
+    'SELECT lower(username) AS name, count(*)::int AS n FROM users GROUP BY lower(username) HAVING count(*) > 1'
+  );
+  if (dups.rows.length) {
+    console.log('WARNING: case-insensitive duplicate usernames: ' +
+      dups.rows.map((d) => JSON.stringify(d.name) + ' x' + d.n).join(', '));
+  }
+  const badHash = rows.filter((u) => !/^\$2[abxy]\$\d{2}\$/.test(String(u.password || '')));
+  if (badHash.length) {
+    console.log('WARNING: ' + badHash.length + ' account(s) do not have a bcrypt password and cannot sign in.');
+    console.log('         Run `npm run recover` to reset the owner, then reset each cashier from the Users page.');
+  }
 }
 
 async function doReset(owners) {
@@ -178,7 +220,7 @@ async function doCreate() {
   console.log('No owner account found. This will CREATE the initial owner (nothing else is touched).');
   const username = (await ask('Choose an owner username (3-50 characters): ')).trim();
   if (!validUsername(username)) { console.log('Username must be 3 to 50 characters. Aborted. Nothing was changed.'); return 1; }
-  const { rows: [taken] } = await db.query('SELECT id FROM users WHERE username = $1', [username]);
+  const { rows: [taken] } = await db.query('SELECT id FROM users WHERE lower(username) = lower($1)', [username]);
   if (taken) { console.log('That username is already taken (by a non-owner row). Choose another. Nothing was changed.'); return 1; }
 
   const pw1 = await askSecret('New password (8-72 characters, hidden): ');
@@ -216,7 +258,8 @@ function help() {
     '',
     '  npm run recover            interactive: reset an existing owner password,',
     '                             or create the owner if none exists',
-    '  npm run recover -- --list  show owner/cashier usernames (read-only)',
+    '  npm run recover -- --list  audit all accounts: username, role, active,',
+    '                             password format (read-only, no hashes shown)',
     '',
     'Notes:',
     '- Run on the server computer. There is no web password reset by design.',
