@@ -1,4 +1,4 @@
-# SmartMart POS - Supabase connection plan (status: connected + data merged, deployment pending)
+# SmartMart POS - Supabase connection plan (status: connected, data merged, deployed)
 
 ## Where things stand
 
@@ -63,6 +63,41 @@ real checkout path (sale + sale_items + stock decrement + movement) and
 confirmed the `sale_items_sale_id_fkey` cascade, then rolled back - the
 database was left byte-identical.
 
+## Deployment (live)
+
+Production: **https://store-vercel-mu.vercel.app** (Vercel project `jennyrose/store-vercel`).
+The same build is also reachable at `store-vercel-jennyrose.vercel.app` and
+`store-vercel-git-main-jennyrose.vercel.app`; those two are behind Vercel
+Authentication (project setting `ssoProtection = all_except_custom_domains`),
+while the project domain above is served directly.
+
+| Item | Value |
+| --- | --- |
+| Project / project id | `jennyrose/store-vercel` / `prj_rR4do24cMnR7hdJomD85ecc8PDyK` |
+| Production env `DATABASE_URL` | Supabase session pooler, percent-encoded password |
+| Production env `AUTH_SECRET` | same value as local `.env` (sessions are interchangeable) |
+| Bundle inputs | `vercel.json` `functions.api.index.js.includeFiles = "{database,certs}/**"` |
+| Health check | `GET /api/status` -> `configured/authSecret/installed = true`, `dbHost = aws-0-ap-southeast-2.pooler.supabase.com` |
+
+Notes that cost time and are worth keeping:
+
+- `includeFiles` **must be a string**. The published JSON schema allows an
+  array, but the build rejects it with
+  `functions.api.index.js.includeFiles should be string`, and the deployment
+  fails before it ever starts.
+- `.vercelignore` (not `.gitignore`) decides what Vercel uploads. It must keep
+  `.env` and `backups/` out (the backups contain bcrypt hashes) while
+  `certs/` and `database/` stay in.
+- The project domain does **not** follow the newest production deployment on
+  its own. After a new build, re-point it explicitly:
+  `vercel alias set <deployment-url> store-vercel-mu.vercel.app`.
+- Vercel snapshots environment variables at build time, so changing an env var
+  requires a new deployment (`vercel redeploy <deployment-id> --environment production`).
+- The commit status "Vercel Deployments - jennyrose" on `8fc16c2` is a stale
+  failure: the build of the *previous* commit (`76f99a8`, which failed on the
+  `includeFiles` schema error) reported its failure against the newer commit.
+  Both `8fc16c2` builds finished with "Deployment completed".
+
 ## Conflict rules (kept for reference - none were hit)
 
 1. **Users** - a Neon username that already exists in Supabase is *never*
@@ -97,16 +132,17 @@ already exist, so they are reported as identical/present.
 
 1. **Rotate the Supabase database password** (it was shared in plaintext) and
    update `.env` + Vercel `DATABASE_URL` together, keeping the value
-   percent-encoded (`@` -> `%40`).
-2. Vercel -> **Settings -> Environment Variables -> DATABASE_URL**
-   (Production + Preview), value from step 1.
-3. Vercel -> **Settings -> Environment Variables -> AUTH_SECRET** (32+ random
-   chars). Keep `AUTH_SECRET` identical in local `.env` and Vercel, otherwise
-   sessions break between environments.
-4. Deploy, then check `https://<app>.vercel.app/api/status`:
-   `configured:true`, `installed:true`, `dbHost:"aws-0-....pooler.supabase.com"`.
-5. Commit the repo changes (`certs/`, the new scripts, `.env.example`,
-   `README.md`, `package.json`, `vercel.json`).
+   percent-encoded (`@` -> `%40`). *Deliberately deferred for now.*
+2. ~~Vercel -> Settings -> Environment Variables -> DATABASE_URL~~ - done,
+   production + preview already point at the Supabase session pooler.
+3. ~~Vercel -> Settings -> Environment Variables -> AUTH_SECRET~~ - done, the
+   production/preview/development values now match local `.env`, so a session
+   minted locally is accepted in production (and the other way round).
+4. ~~Deploy, then check `/api/status`~~ - done, it returns
+   `configured:true`, `authSecret:true`, `installed:true` and
+   `dbHost:"aws-0-ap-southeast-2.pooler.supabase.com"`.
+5. ~~Commit the repo changes~~ - done: `76f99a8` (Supabase + merge tooling)
+   and `8fc16c2` (build fix), both pushed to `origin/main`.
 
 ## Housekeeping
 
