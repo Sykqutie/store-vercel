@@ -857,7 +857,8 @@ api.get('/backups', loadAccount, requireOwner, wrap(async (req, res) => {
     const latest = backups.find((b) => b.valid) || null;
     res.json({ backups, latest, ephemeral: backup.isEphemeral(), auto: backup.describeAuto() });
   } catch (e) {
-    return dbDown(res, e);
+    console.error('BACKUPS_LIST_ERR:', e && e.stack ? e.stack : e);
+    return res.status(500).json({ error: e && e.message ? e.message : String(e) });
   }
 }));
 
@@ -867,8 +868,9 @@ api.post('/backups', loadAccount, requireOwner, wrap(async (req, res) => {
     const created = await backup.writeBackup(kind);
     res.json({ ok: true, backup: created, ephemeral: backup.isEphemeral() });
   } catch (e) {
+    console.error('BACKUPS_CREATE_ERR:', e && e.stack ? e.stack : e);
     if (e.status) return bad(res, e.message, e.status);
-    return dbDown(res, e);
+    return res.status(500).json({ error: e && e.message ? e.message : String(e) });
   }
 }));
 
