@@ -1,0 +1,22 @@
+# Files Vercel must NOT upload.
+#
+# NOTE: when this file exists Vercel uses it INSTEAD of .gitignore, so every
+# rule that matters is listed here explicitly. .env must stay on this list or
+# the database password would be uploaded with the deployment.
+node_modules
+.git
+.vercel
+
+# Secrets - never upload
+.env
+.env.local
+.env.*.local
+
+# Local data and tooling
+backups/
+.agents/
+skills-lock.json
+plan.md
+
+# certs/ and database/ MUST be uploaded: vercel.json uses includeFiles to
+# bundle the Supabase root CA and schema.sql with the serverless function.

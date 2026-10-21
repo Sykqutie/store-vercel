@@ -180,11 +180,11 @@ api.get('/status', wrap(async (req, res) => {
     // Safe, specific hint: error codes + hostname only, never the URL, password, or db name.
     const code = String(e.code || '');
     let dbError = 'Could not reach the database. Check DATABASE_URL.';
-    if (code === '28P01') dbError = 'Database login failed (wrong user/password in DATABASE_URL). Copy a fresh pooled connection string from Neon/Supabase and update the Vercel env var, then redeploy.';
+    if (code === '28P01') dbError = 'Database login failed (wrong user/password in DATABASE_URL). Copy a fresh pooled connection string from Supabase (Connect -> Connection string -> URI -> Session pooler) and update the Vercel env var, then redeploy.';
     else if (code === '3D000') dbError = 'Database name in DATABASE_URL does not exist. Check the dbname part of the URL.';
-    else if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') dbError = 'Database host not found (DNS)' + (dbHost ? ' — the app sees host "' + dbHost + '".' : '.') + ' Copy the pooled connection string again from your Neon project (Neon pooled hosts contain "-pooler").';
-    else if (code === 'ECONNREFUSED') dbError = 'Database refused the connection. Wrong host/port, or the Neon compute is paused — open the Neon console once to resume, then retry /api/status.';
-    else if (code === 'ETIMEDOUT' || /timeout/i.test(e.message || '')) dbError = 'Database connection timed out (cold start or wrong region/host). Retry /api/status once — Neon free-tier wake-up can exceed the first attempt — and confirm the pooled URL + function region near the DB.';
+    else if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') dbError = 'Database host not found (DNS)' + (dbHost ? ' — the app sees host "' + dbHost + '".' : '.') + ' Copy the Supabase pooled connection string again (the session pooler host contains ".pooler.supabase.com").';
+    else if (code === 'ECONNREFUSED') dbError = 'Database refused the connection. Wrong host/port — use the Supabase session pooler on port 5432.';
+    else if (code === 'ETIMEDOUT' || /timeout/i.test(e.message || '')) dbError = 'Database connection timed out (cold start or wrong region). Retry /api/status once, and confirm the function region is close to the Supabase region.';
     else if (/password.*must.*be.*url-encoded|SASL|SCRAM/i.test(e.message || '')) dbError = 'Database password looks mis-encoded. Percent-encode @ / : # ? & in the password part of DATABASE_URL.';
     res.json({ configured: true, authSecret, installed: false, env, dbHost, dbError, dbCode: code || undefined });
   }
