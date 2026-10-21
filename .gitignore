@@ -3,3 +3,7 @@ node_modules
 .env.local
 .vercel
 backups/
+
+# local agent tooling, not app code
+.agents/
+skills-lock.json

@@ -3,15 +3,30 @@
   "version": "2.0.0",
   "private": true,
   "description": "SmartMart POS and inventory, ported from PHP/MySQL to Node.js/Postgres for Vercel",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "node --env-file=.env dev.js",
     "start": "node --env-file=.env dev.js",
     "recover": "node --env-file=.env scripts/recover-owner.js",
     "backup": "node --env-file=.env scripts/backup.js create",
-    "backup:list": "node --env-file=.env scripts/backup.js list"
+    "backup:list": "node --env-file=.env scripts/backup.js list",
+    "db:test": "node --env-file=.env scripts/db-test.js",
+    "db:inspect": "node --env-file=.env scripts/db-inspect.js",
+    "db:schema": "node --env-file=.env scripts/schema-audit.js",
+    "db:snapshot": "node --env-file=.env scripts/data-snapshot.js",
+    "db:merge-neon": "node --env-file=.env scripts/merge-neon.js",
+    "db:neon-check": "node --env-file=.env scripts/neon-check.js",
+    "db:compare": "node --env-file=.env scripts/compare-neon-supabase.js",
+    "db:security": "node --env-file=.env scripts/security-check.js",
+    "db:verify-merge": "node --env-file=.env scripts/verify-merge.js",
+    "db:smoke": "node --env-file=.env scripts/smoke-app.js",
+    "db:smoke-writes": "node --env-file=.env scripts/smoke-writes.js"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.118.0",
     "bcryptjs": "^2.4.3",
     "express": "^4.21.2",
     "pg": "^8.13.1"

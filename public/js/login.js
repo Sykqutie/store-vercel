@@ -45,7 +45,8 @@
           : 'No database variable found on this deployment.';
         n.innerHTML =
           '<div class="alert">DATABASE_URL is not set on this Vercel deployment. ' + esc(dbg) +
-          '<br><br>1) Vercel Dashboard → project → <b>Storage → Create Database → Neon Postgres</b> (or Settings → Environment Variables → add <b>DATABASE_URL</b> for <b>Production</b>).' +
+          '<br><br>1) Supabase Dashboard → your project → <b>Connect → Connection string → URI</b> (choose the <b>Session pooler</b>). ' +
+          'In Vercel: <b>Settings → Environment Variables → add <b>DATABASE_URL</b> for <b>Production</b></b>.' +
           '<br>2) <b>Deployments → Redeploy</b> (old deployments keep old env).' +
           '<br>3) Open <a href="/api/status">/api/status</a> — expect <span class="mono">configured:true</span>, then <a href="/install">run the installer</a>. See README “Deploy to Vercel”.</div>' +
           '<div class="btn-row" style="margin-top:8px"><button class="btn sm" id="nRecheck" type="button">Recheck</button>' +

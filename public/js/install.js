@@ -34,7 +34,7 @@
         st.innerHTML =
           '<div class="alert">DATABASE_URL is not set on this Vercel deployment. ' + A.esc(dbg) + '</div>' +
           '<ol style="margin:10px 0 10px 18px;font-size:14px;line-height:1.6">' +
-          '<li>Vercel Dashboard → your project → <b>Storage</b> → <b>Create Database</b> → <b>Neon Postgres</b> (or <b>Settings → Environment Variables</b> → add <b>DATABASE_URL</b> manually for <b>Production</b>).</li>' +
+          '<li>Supabase Dashboard → your project → <b>Connect → Connection string → URI</b> (choose the <b>Session pooler</b>). In Vercel: <b>Settings → Environment Variables → add <b>DATABASE_URL</b> manually for <b>Production</b></b>.</li>' +
           '<li><b>Deployments → Redeploy</b> — env changes need a new deployment (old URLs keep old env).</li>' +
           '<li>Open <a href="/api/status">/api/status</a> — it should show <span class="mono">configured:true</span>, then press Recheck.</li>' +
           '</ol>' +

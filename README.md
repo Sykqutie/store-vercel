@@ -30,15 +30,61 @@ store-vercel/
 └── .env.example
 ```
 
+## Database: Supabase PostgreSQL
+
+The app talks to Postgres over a plain **server-side** `pg` connection. It never
+uses the Supabase browser client, the Data API, or Supabase Auth, so no
+`anon`/`service_role` key belongs in this project.
+
+**Get the connection string:** Supabase Dashboard → your project → **Connect**
+(top toolbar) → **Connection string** → **URI**. Choose **Session pooler**
+(port `5432`, host `aws-0-<region>.pooler.supabase.com`) for both local
+development and Vercel.
+
+| Connection type | Host / port | Use it for |
+| --- | --- | --- |
+| **Session pooler** | `aws-0-<region>.pooler.supabase.com:5432` | **This app** (app code, Vercel, local dev) |
+| Transaction pooler | `aws-0-<region>.pooler.supabase.com:6543` | Not used - this app runs multi-statement transactions, which the transaction pooler breaks |
+| Direct | `db.<project-ref>.supabase.co:5432` | Schema work only (IPv6-only, no pooling) |
+
+The string looks like
+`postgresql://postgres.<project-ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require`.
+Percent-encode reserved characters in the password (`@` → `%40`, `/` → `%2F`,
+`#` → `%23`, `?` → `%3F`); Supabase's copy button leaves the password unencoded.
+
+**TLS:** `lib/db.js` connects with `rejectUnauthorized: true` against the
+bundled `certs/supabase-root-ca.pem` (the public *Supabase Root 2021 CA*).
+Certificate verification is never disabled and no certificate is fetched at
+runtime. Keep that file in the repo - `vercel.json` ships it inside the
+function via `includeFiles`.
+
+**Row Level Security:** the app connects as the `postgres` role, which bypasses
+RLS, and the Data API is unused. RLS is therefore left **enabled** on the
+tables (do not disable it) - with no policies, `anon`/`authenticated` can read
+or write nothing through the Data API, which is exactly what this app wants.
+
 ## Deploy to Vercel
 
 1. Push this folder to a GitHub repository and import it in Vercel (framework preset: **Other**, no build command).
-2. In the Vercel project, open **Storage** and add a **Neon Postgres** database. This sets `DATABASE_URL` automatically. Any other Postgres works too: set `DATABASE_URL` yourself.
-3. In **Settings → Environment Variables** add `AUTH_SECRET` with a long random value (`openssl rand -base64 32`). Optional: `STORE_NAME` and `STORE_TZ` (default `Asia/Manila`).
-4. Deploy. Open `https://your-app.vercel.app/install`, choose an admin username and a password (8+ characters), and tick the demo products box if you want sample items.
-5. Sign in at `/login`.
+2. In **Settings → Environment Variables**, add for **Production** (and
+   **Preview** if you use it):
+   - `DATABASE_URL` — the Supabase **session pooler** URI from above.
+   - `AUTH_SECRET` — a long random value
+     (`node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`).
+   - Optional: `STORE_NAME` (default `SmartMart`) and `STORE_TZ` (default `Asia/Manila`).
+3. Deploy. Open `https://your-app.vercel.app/api/status` and confirm
+   `configured: true`, `installed: true` and that `dbHost` shows your
+   `*.pooler.supabase.com` host.
+4. If the database has no account yet, open `/install` to create the first
+   owner (8+ character password). Otherwise sign in at `/login`.
 
-Tip: set the function region (Project Settings → Functions) near your database region for faster queries.
+Tip: set the function region (Project Settings → Functions) near your Supabase
+region (`ap-southeast-2` for an `aws-0-ap-southeast-2` pooler host) for faster
+queries.
+
+Never put `DATABASE_URL`, `AUTH_SECRET` or any Supabase key in the repository,
+in client-side JavaScript, or in a Vercel variable that starts with
+`NEXT_PUBLIC_` / `PUBLIC_`.
 
 ## Run locally
 
@@ -49,6 +95,15 @@ npm run dev              # http://localhost:3000
 ```
 
 Needs Node 20.6+ (it uses `node --env-file`).
+
+Read-only helpers (they never write to the database):
+
+```
+node --env-file=.env scripts/db-test.js        # connectivity + row counts
+node --env-file=.env scripts/db-inspect.js     # host, TLS state, roles
+node --env-file=.env scripts/schema-audit.js   # columns, constraints, indexes, RLS
+node --env-file=.env scripts/data-snapshot.js  # current rows (hashes never printed)
+```
 
 ## Account recovery (forgot owner login)
 
