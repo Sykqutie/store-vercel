@@ -88,15 +88,37 @@ Notes that cost time and are worth keeping:
 - `.vercelignore` (not `.gitignore`) decides what Vercel uploads. It must keep
   `.env` and `backups/` out (the backups contain bcrypt hashes) while
   `certs/` and `database/` stay in.
+- Vercel snapshots environment variables at build time, so changing an env var
+  requires a new deployment (`vercel redeploy <deployment-id> --environment production`).
+- The commit status "Vercel Deployments - jennyrose" is red even though every
+  build ends with "Deployment completed". The cause is Vercel's own internal
+  check on the deployment, not the build:
+
+  ```
+  GET /v13/deployments/<id>
+    readyState    = READY
+    readySubstate = STAGED
+    aliasAssigned = false
+    checks        = { "deployment-alias": { "state": "failed" } }
+  ```
+
+  The `deployment-alias` check tries to hand the production domain to the new
+  deployment and fails, so the deployment stays STAGED, the project domain is
+  not moved automatically, and the GitHub app reports
+  "1 required project failed to deploy". It has been failing for every
+  deployment of this project for at least 8 days (including the ones that
+  were serving production), so it is a pre-existing project/team
+  configuration problem, not something the Supabase migration caused. The
+  project was transferred from the team whose slug is `mu`
+  (`store-vercel-mu.vercel.app` is the leftover project domain) to `jennyrose`
+  (`store-vercel-jennyrose.vercel.app`), and the alias assignment still
+  disagrees with that.
+- Workaround: assign the domain by hand after every build -
+  `vercel alias set <deployment-url> store-vercel-mu.vercel.app` - and check
+  it with `GET /api/status` (it must report the Supabase pooler host).
 - The project domain does **not** follow the newest production deployment on
   its own. After a new build, re-point it explicitly:
   `vercel alias set <deployment-url> store-vercel-mu.vercel.app`.
-- Vercel snapshots environment variables at build time, so changing an env var
-  requires a new deployment (`vercel redeploy <deployment-id> --environment production`).
-- The commit status "Vercel Deployments - jennyrose" on `8fc16c2` is a stale
-  failure: the build of the *previous* commit (`76f99a8`, which failed on the
-  `includeFiles` schema error) reported its failure against the newer commit.
-  Both `8fc16c2` builds finished with "Deployment completed".
 
 ## Conflict rules (kept for reference - none were hit)
 
