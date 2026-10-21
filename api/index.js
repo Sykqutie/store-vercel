@@ -858,7 +858,7 @@ api.get('/backups', loadAccount, requireOwner, wrap(async (req, res) => {
     res.json({ backups, latest, ephemeral: backup.isEphemeral(), auto: backup.describeAuto() });
   } catch (e) {
     console.error('BACKUPS_LIST_ERR:', e && e.stack ? e.stack : e);
-    return res.status(500).json({ error: e && e.message ? e.message : String(e) });
+    console.error('BACKUPS_ERR:', e && e.stack ? e.stack : e); return res.status(500).json({ error: e && e.message ? e.message : String(e) });
   }
 }));
 
@@ -870,7 +870,7 @@ api.post('/backups', loadAccount, requireOwner, wrap(async (req, res) => {
   } catch (e) {
     console.error('BACKUPS_CREATE_ERR:', e && e.stack ? e.stack : e);
     if (e.status) return bad(res, e.message, e.status);
-    return res.status(500).json({ error: e && e.message ? e.message : String(e) });
+    console.error('BACKUPS_ERR:', e && e.stack ? e.stack : e); return res.status(500).json({ error: e && e.message ? e.message : String(e) });
   }
 }));
 
