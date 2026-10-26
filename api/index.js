@@ -10,9 +10,10 @@ const { tz, periodStats, chart7 } = require('../lib/stats');
 
 const app = express();
 app.disable('x-powered-by');
-// 12mb: backup restores upload a full JSON backup in the request body.
-// Ordinary POS payloads are a few KB; backup size is capped separately in lib/backup.js.
-app.use(express.json({ limit: '12mb' }));
+// 25mb: local backup restores upload a full JSON backup in the request body.
+// Ordinary POS payloads are a few KB; Vercel's platform limit (~4.5 MB) still
+// applies there, so lib/backup.js lowers the upload cap when running on Vercel.
+app.use(express.json({ limit: '25mb' }));
 const backup = require('../lib/backup');
 
 const api = express.Router();
@@ -851,14 +852,33 @@ const dbDown = (res, e) => {
   throw e;
 };
 
+const backupFail = (res, e, fallback) => {
+  const status = e && e.status ? e.status : 500;
+  const body = { error: e && e.message ? e.message : fallback };
+  if (e && e.setup) body.setup = e.setup;
+  if (status >= 500 && !(e && e.status)) body.error = fallback;
+  return res.status(status).json(body);
+};
+
 api.get('/backups', loadAccount, requireOwner, wrap(async (req, res) => {
+  const storage = backup.storageInfo();
+  const meta = {
+    ephemeral: backup.isEphemeral(),
+    persistent: backup.isPersistent(),
+    uploadLimit: backup.maxUploadBytes(),
+    storage,
+    auto: backup.describeAuto(),
+  };
+  if (storage.mode === 'unconfigured') {
+    return res.json({ backups: [], latest: null, ...meta });
+  }
   try {
-    const backups = backup.listBackups();
+    const backups = await backup.listBackups();
     const latest = backups.find((b) => b.valid) || null;
-    res.json({ backups, latest, ephemeral: backup.isEphemeral(), auto: backup.describeAuto() });
+    res.json({ backups, latest, ...meta });
   } catch (e) {
     console.error('BACKUPS_LIST_ERR:', e && e.stack ? e.stack : e);
-    console.error('BACKUPS_ERR:', e && e.stack ? e.stack : e); return res.status(500).json({ error: e && e.message ? e.message : String(e) });
+    return backupFail(res, e, 'Could not list backups. Check the server logs and try again.');
   }
 }));
 
@@ -866,48 +886,38 @@ api.post('/backups', loadAccount, requireOwner, wrap(async (req, res) => {
   const kind = ['manual', 'daily', 'weekly'].includes(req.body.kind) ? req.body.kind : 'manual';
   try {
     const created = await backup.writeBackup(kind);
-    res.json({ ok: true, backup: created, ephemeral: backup.isEphemeral() });
+    res.json({
+      ok: true,
+      backup: created,
+      ephemeral: backup.isEphemeral(),
+      persistent: backup.isPersistent(),
+      storage: backup.storageInfo(),
+    });
   } catch (e) {
     console.error('BACKUPS_CREATE_ERR:', e && e.stack ? e.stack : e);
-    if (e.status) return bad(res, e.message, e.status);
-    console.error('BACKUPS_ERR:', e && e.stack ? e.stack : e); return res.status(500).json({ error: e && e.message ? e.message : String(e) });
+    return backupFail(res, e, 'Could not create the backup. Nothing was changed.');
   }
 }));
 
 api.get('/backups/:file', loadAccount, requireOwner, wrap(async (req, res) => {
-  const fs = require('fs');
-  let full;
   try {
-    full = backup.safePath(req.params.file);
-  } catch (e) {
-    return bad(res, e.message, e.status || 400);
-  }
-  fs.stat(full, (err, stat) => {
-    if (err || !stat.isFile()) return bad(res, 'Backup file not found.', 404);
+    const obj = await backup.readBackupObject(req.params.file);
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="${req.params.file}"`);
-    fs.createReadStream(full).pipe(res);
-  });
+    res.setHeader('Content-Disposition', `attachment; filename="${obj.file}"`);
+    res.setHeader('Content-Length', String(obj.size));
+    res.send(obj.text);
+  } catch (e) {
+    return backupFail(res, e, 'Could not download that backup.');
+  }
 }));
 
 api.delete('/backups/:file', loadAccount, requireOwner, wrap(async (req, res) => {
-  const fs = require('fs');
-  let full;
   try {
-    full = backup.safePath(req.params.file);
+    const file = await backup.deleteBackup(req.params.file);
+    res.json({ ok: true, file });
   } catch (e) {
-    return bad(res, e.message, e.status || 400);
+    return backupFail(res, e, 'Could not delete that backup.');
   }
-  const remaining = backup.listBackups().filter((b) => b.valid && b.file !== require('path').basename(full));
-  if (remaining.length === 0) {
-    return bad(res, 'Refusing to delete the only available valid backup. Create a newer backup first.', 409);
-  }
-  try {
-    fs.unlinkSync(full);
-  } catch (_) {
-    return bad(res, 'Backup file not found.', 404);
-  }
-  res.json({ ok: true, file: require('path').basename(full) });
 }));
 
 // Restore: { file } restores a server-stored backup, { backup } restores an
@@ -918,10 +928,12 @@ api.post('/backups/restore', loadAccount, requireOwner, wrap(async (req, res) =>
   let obj = null;
   try {
     if (req.body.file) {
-      obj = backup.readBackupFile(req.body.file);
+      obj = await backup.readBackupFile(req.body.file);
     } else if (req.body.backup) {
-      if (JSON.stringify(req.body.backup).length > backup.MAX_FILE_BYTES) {
-        return bad(res, 'Uploaded backup is too large and was rejected.', 413);
+      const size = Buffer.byteLength(JSON.stringify(req.body.backup), 'utf8');
+      const limit = backup.maxUploadBytes();
+      if (size > limit) {
+        return bad(res, `Uploaded backup is too large (${(size / 1048576).toFixed(1)} MB). This server accepts at most ${(limit / 1048576).toFixed(1)} MB for uploads; restore a server-stored backup instead.`, 413);
       }
       obj = req.body.backup;
     } else {
@@ -930,7 +942,7 @@ api.post('/backups/restore', loadAccount, requireOwner, wrap(async (req, res) =>
     const result = await backup.restoreBackup(obj, { sessionUid: req.user.uid });
     res.json({ ok: true, counts: result.counts, safety: result.safety, sessionKept: result.sessionKept });
   } catch (e) {
-    if (e.status) return bad(res, e.message, e.status);
+    if (e.status) return backupFail(res, e, 'Restore failed. Nothing was changed.');
     return dbDown(res, e);
   }
 }));

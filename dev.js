@@ -77,10 +77,10 @@ root.get(Object.keys(PAGES), (req, res) => {
     first.setUTCDate(first.getUTCDate() - fday + 3);
     return t.getUTCFullYear() + '-W' + String(1 + Math.round((t - first) / 6048e5)).padStart(2, '0');
   };
-  const due = () => {
+  const due = async () => {
     try {
       const now = new Date();
-      const have = backup.listBackups().filter((b) => b.valid && b.kind === mode);
+      const have = (await backup.listBackups()).filter((b) => b.valid && b.kind === mode);
       if (mode === 'daily') return !have.some((b) => dayKey(new Date(b.created_at)) === dayKey(now));
       return !have.some((b) => weekKey(new Date(b.created_at)) === weekKey(now));
     } catch (_) {
@@ -88,7 +88,7 @@ root.get(Object.keys(PAGES), (req, res) => {
     }
   };
   const run = async () => {
-    if (!due()) return;
+    if (!(await due())) return;
     try {
       const c = await backup.writeBackup(mode);
       console.log(`Auto-backup (${mode}) created: ${c.file}`);

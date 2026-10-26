@@ -19,10 +19,12 @@ function arg(name) {
 
 async function main() {
   const cmd = process.argv[2] || 'create';
+  const storage = backup.storageInfo();
   if (cmd === 'list') {
-    const all = backup.listBackups();
+    console.log('Storage: ' + storage.mode + ' — ' + storage.message);
+    const all = await backup.listBackups();
     if (!all.length) {
-      console.log('No backups in ' + backup.backupDir());
+      console.log('No backups available.');
       return;
     }
     for (const b of all) {
@@ -32,7 +34,7 @@ async function main() {
     return;
   }
   if (cmd === 'prune') {
-    const r = backup.pruneBackups();
+    const r = await backup.pruneBackups();
     console.log(r.deleted.length ? 'Deleted: ' + r.deleted.join(', ') : 'Nothing to prune.');
     return;
   }
@@ -42,10 +44,10 @@ async function main() {
     console.log(`Backup created and verified: ${created.file} (${(created.size / 1024).toFixed(1)} KB)`);
     console.log(`Counts: users=${created.counts.users} products=${created.counts.products} ` +
       `sales=${created.counts.sales} items=${created.counts.sale_items} movements=${created.counts.stock_movements}`);
-    if (backup.isEphemeral()) {
-      console.log('NOTE: this filesystem is ephemeral — download the backup to an external drive now.');
+    if (storage.mode === 'supabase') {
+      console.log('Stored in private Supabase Storage bucket: ' + storage.bucket);
     } else {
-      console.log('Stored in: ' + backup.backupDir());
+      console.log('Stored in: ' + storage.location);
       console.log('Keep a copy outside this computer (external drive or secure cloud storage).');
     }
     return;

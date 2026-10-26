@@ -18,6 +18,7 @@ store-vercel/
 │   ├── db.js             Postgres pool and transactions
 │   ├── auth.js           Signed HttpOnly session cookie
 │   ├── backup.js         Backup/restore core (collect, verify, retention)
+│   ├── backup-store.js   Backup storage: local folder or private Supabase Storage
 │   ├── stats.js          Day/week/month totals and 7-day chart queries
 │   └── schema.js         Loads database/schema.sql for the installer
 ├── database/schema.sql   Tables: users, products, sales, sale_items, stock_movements
@@ -33,8 +34,10 @@ store-vercel/
 ## Database: Supabase PostgreSQL
 
 The app talks to Postgres over a plain **server-side** `pg` connection. It never
-uses the Supabase browser client, the Data API, or Supabase Auth, so no
-`anon`/`service_role` key belongs in this project.
+uses the Supabase browser client, the Data API, or Supabase Auth. The only
+Supabase key used anywhere is an optional **server-side** `service_role` key for
+the private backup bucket; it is never sent to the browser. Do not add an
+`anon` key.
 
 **Get the connection string:** Supabase Dashboard → your project → **Connect**
 (top toolbar) → **Connection string** → **URI**. Choose **Session pooler**
@@ -72,6 +75,11 @@ or write nothing through the Data API, which is exactly what this app wants.
    - `AUTH_SECRET` — a long random value
      (`node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`).
    - Optional: `STORE_NAME` (default `SmartMart`) and `STORE_TZ` (default `Asia/Manila`).
+   - `SUPABASE_SERVICE_ROLE_KEY` — server-side key used only for durable backups
+     (see **Backup & Restore** below). Optional but production backups are
+     disabled until it is set.
+   - Optional: `SUPABASE_URL` (derived from `DATABASE_URL` when possible) and
+     `BACKUP_BUCKET` (default `smartmart-backups`).
 3. Deploy. Open `https://your-app.vercel.app/api/status` and confirm
    `configured: true`, `installed: true` and that `dbHost` shows your
    `*.pooler.supabase.com` host.
@@ -141,28 +149,45 @@ Postgres is running (local Docker: `docker start smartmart-pg`).
 The **Backup** page (`/backup`, owner-only — cashiers see a restricted page)
 protects all store data: users + password hashes, products, sales, sale items,
 stock movements, plus store/timezone metadata. Backups are portable JSON files
-named `smartmart-backup-YYYYMMDD-HHMMSS-<kind>.json`, checksummed and verified
-before success is reported. No `pg_dump` binary or superuser rights needed.
+named `smartmart-backup-YYYYMMDD-HHMMSS-mmm-<kind>.json` (older files without
+the milliseconds part are still accepted), checksummed and verified before
+success is reported. No `pg_dump` binary or superuser rights needed.
 
+- **Where files live:** on Windows/VPS they go to `backups/` (outside
+  `public/`; override with `BACKUP_DIR`). On Vercel the filesystem is
+  ephemeral, so the app stores backups in a **private Supabase Storage bucket**
+  instead. If durable storage is not configured there, the Backup page shows
+  the exact setup steps and disables create/restore rather than pretending a
+  temporary file is safe.
+- **One-time Supabase Storage setup (Vercel):**
+  1. Supabase Dashboard → **Storage** → create a **private** bucket named
+     `smartmart-backups` (or set `BACKUP_BUCKET` to another private bucket).
+  2. Supabase Dashboard → **Project Settings → API Keys** → copy the
+     server-side `service_role` / secret key.
+  3. Vercel → project → **Settings → Environment Variables** → add
+     `SUPABASE_SERVICE_ROLE_KEY` for **Production** (and Preview if used).
+     `SUPABASE_URL` is optional when `DATABASE_URL` points at Supabase.
+  4. Redeploy, then create a backup on `/backup` and confirm it lists as valid.
+  Never expose this key in browser code or commit it.
 - **Create:** open `/backup` → **Create Backup**, or on the server run
-  `npm run backup`. Files go to `backups/` (outside `public/`; override with
-  `BACKUP_DIR`). Every restore first writes an automatic `safety` backup.
+  `npm run backup`. Every restore first writes an automatic `safety` backup.
 - **Download/store safely:** press **Download** (or **Download Backup** for the
-  latest) and copy the file to an external drive or secure cloud storage.
-  Server files alone are not enough — keep one copy off the computer.
+  latest) and keep an extra copy on an external drive or secure cloud storage.
 - **Restore:** on `/backup`, pick a server backup or upload a saved file →
   **Restore Backup** → type `RESTORE` to confirm. The restore is validated,
   runs in one transaction, is count-verified before commit, and reports a
-  safety-backup file. If your login was replaced, sign in again.
-- **Automatic:** set `BACKUP_AUTO=daily|weekly` in `.env` (keeps 7 daily / 4
-  weekly by default, configurable via `BACKUP_KEEP_DAILY/WEEKLY`; manual and
-  safety backups are never auto-deleted, and the last valid backup is never
-  removed). This needs the local server kept running. For hands-off
-  scheduling on Windows, use Task Scheduler to run `npm run backup -- --kind=daily`
-  daily (works even when the server is off).
-- **Vercel limitation:** Vercel's filesystem is ephemeral, so server-stored
-  backups can vanish — always Download immediately, and use your Postgres
-  host's scheduled backups (Neon/Supabase) as a second safety net.
+  safety-backup file. If your login was replaced, sign in again. Uploading a
+  file over HTTP is capped at **25 MB** locally and **4 MB** on Vercel
+  (platform request limit); server-stored Supabase backups are not subject to
+  that upload cap.
+- **Automatic/retention:** local mode supports `BACKUP_AUTO=daily|weekly` in
+  `.env` (keeps 7 daily / 4 weekly by default, configurable via
+  `BACKUP_KEEP_DAILY/WEEKLY`; manual and safety backups are never auto-deleted,
+  and the last valid backup is never removed). This needs the local server kept
+  running. For hands-off scheduling on Windows, use Task Scheduler to run
+  `npm run backup -- --kind=daily` daily (works even when the server is off).
+  Scheduled auto-backups are not enabled in Supabase Storage mode; create them
+  from `/backup` or add a scheduled job.
 - **Safe testing:** test restores against a separate database first
   (`DATABASE_URL` pointing at a test DB). A restore overwrites newer records.
 - **`pg_dump` alternative (optional):** if you prefer native SQL dumps on

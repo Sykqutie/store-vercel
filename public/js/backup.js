@@ -56,7 +56,15 @@
     box.hidden = false;
   }
 
-  var cache = { backups: [], latest: null, ephemeral: false, auto: null };
+  var cache = { backups: [], latest: null, ephemeral: false, persistent: false, uploadLimit: 0, storage: null, auto: null };
+
+  function applyStorageState() {
+    var blocked = !!(cache.storage && cache.storage.mode === 'unconfigured');
+    ['#bkCreate', '#bkDownloadLatest', '#bkRestore', '#restoreUpload'].forEach(function (sel) {
+      var el = A.$(sel);
+      if (el) el.disabled = blocked;
+    });
+  }
 
   async function load() {
     var body = A.$('#bkBody'), latest = A.$('#bkLatest');
@@ -72,8 +80,15 @@
     // Latest backup line + environment notices.
     if (latest) {
       var h = '';
-      if (cache.ephemeral) {
-        h += '<div class="alert">Running on Vercel: server files are temporary and can disappear at any time. Always press Download right after creating a backup and keep a copy on an external drive or cloud storage.</div>';
+      var st = cache.storage || {};
+      if (st.mode === 'unconfigured') {
+        h += '<div class="alert"><b>Persistent backups are not configured.</b> Backups are disabled until Supabase Storage is set up, so no backup can be lost to a redeploy in the meantime.' +
+          (st.setup && st.setup.length ? '<ol class="note">' + st.setup.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') + '</ol>' : '') +
+          '</div>';
+      } else if (st.mode === 'supabase') {
+        h += '<div class="alert info">Backups are stored privately in Supabase Storage (bucket <b class="mono">' + esc(st.bucket) + '</b>) and persist across redeploys and restarts.</div>';
+      } else if (cache.ephemeral) {
+        h += '<div class="alert">Running on an ephemeral filesystem: server files are temporary and can disappear at any time. Always press Download right after creating a backup and keep a copy off this computer.</div>';
       }
       if (cache.latest) {
         h += '<div class="alert info">Latest backup: <b class="mono">' + esc(cache.latest.file) + '</b> · ' +
@@ -102,7 +117,7 @@
           '<button class="btn sm" type="button" data-dl="' + esc(b.file) + '">Download</button>' +
           '<button class="btn sm danger" type="button" data-del="' + esc(b.file) + '">Delete</button>' +
           '</div></td></tr>';
-      }).join('') : '<tr><td colspan="5" class="empty">No backups stored on this server. Downloaded copies you saved earlier can be restored with the upload option below.</td></tr>';
+      }).join('') : '<tr><td colspan="5" class="empty">No backups stored yet. Downloaded copies you saved earlier can be restored with the upload option below.</td></tr>';
     }
     // Restore-from-server dropdown.
     var sel = A.$('#restoreFile');
@@ -112,6 +127,7 @@
         ? valid.map(function (b) { return '<option value="' + esc(b.file) + '">' + esc(b.file) + '</option>'; }).join('')
         : '<option value="">No server backups available</option>';
     }
+    applyStorageState();
     A.noteRefreshed();
   }
 
@@ -159,7 +175,12 @@
 
   async function doRestoreUpload(fileObj) {
     if (!fileObj) return;
-    if (fileObj.size > 12 * 1024 * 1024) { status('File is too large (max ~12 MB for upload).', true); return; }
+    var limit = Number(cache.uploadLimit || 0);
+    if (limit && fileObj.size > limit) {
+      status('File is too large (' + fmtSize(fileObj.size) + '). This server accepts at most ' + fmtSize(limit) +
+        ' for uploads; restore a server-stored backup instead.', true);
+      return;
+    }
     var text;
     try {
       text = await fileObj.text();
@@ -223,7 +244,9 @@
       try {
         var r = await A.api('/backups', { body: { kind: 'manual' } });
         status('Backup created and verified: ' + r.backup.file + ' (' + fmtSize(r.backup.size) + '). ' +
-          (r.ephemeral ? 'Download it now — server files are temporary.' : 'Download a copy to an external drive.'));
+          (r.storage && r.storage.mode === 'supabase'
+            ? 'Stored in private Supabase Storage.'
+            : r.ephemeral ? 'Download it now — server files are temporary.' : 'Download a copy to an external drive.'));
         A.toast('Backup created: ' + r.backup.file);
         await load();
       } catch (e) {
