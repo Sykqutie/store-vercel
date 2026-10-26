@@ -163,10 +163,13 @@ success is reported. No `pg_dump` binary or superuser rights needed.
   1. Supabase Dashboard → **Storage** → create a **private** bucket named
      `smartmart-backups` (or set `BACKUP_BUCKET` to another private bucket).
   2. Supabase Dashboard → **Project Settings → API Keys** → copy the
-     server-side `service_role` / secret key.
+     server-side `service_role` / secret key. Reveal it first; do not paste a
+     masked preview (bullets are not valid key characters).
   3. Vercel → project → **Settings → Environment Variables** → add
      `SUPABASE_SERVICE_ROLE_KEY` for **Production** (and Preview if used).
-     `SUPABASE_URL` is optional when `DATABASE_URL` points at Supabase.
+     `SUPABASE_URL` is optional when `DATABASE_URL` points at Supabase; if set,
+     it must be `https://<project-ref>.supabase.co`, never the database or
+     pooler hostname.
   4. Redeploy, then create a backup on `/backup` and confirm it lists as valid.
   Never expose this key in browser code or commit it.
 - **Create:** open `/backup` → **Create Backup**, or on the server run

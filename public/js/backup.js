@@ -72,8 +72,13 @@
       var r = await A.api('/backups');
       cache = r;
     } catch (e) {
-      if (latest) latest.innerHTML = '<div class="alert">' + esc(e.message) + '</div>';
-      if (body) body.innerHTML = '<tr><td colspan="5"><div class="alert">' + esc(e.message) + '</div></td></tr>';
+      cache = { backups: [], latest: null, ephemeral: false, persistent: false, uploadLimit: 0, storage: null, auto: null };
+      if (latest) {
+        latest.innerHTML = '<div class="alert">' + esc(e.message) +
+          (e.setup && e.setup.length ? '<ol class="note">' + e.setup.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') + '</ol>' : '') +
+          '</div>';
+      }
+      if (body) body.innerHTML = '';
       A.noteRefreshed();
       return;
     }
@@ -82,7 +87,9 @@
       var h = '';
       var st = cache.storage || {};
       if (st.mode === 'unconfigured') {
-        h += '<div class="alert"><b>Persistent backups are not configured.</b> Backups are disabled until Supabase Storage is set up, so no backup can be lost to a redeploy in the meantime.' +
+        h += '<div class="alert"><b>Persistent backups are not configured.</b> ' +
+          (st.message ? esc(st.message) + ' ' : '') +
+          'Backups are disabled until Supabase Storage is set up, so no backup can be lost to a redeploy in the meantime.' +
           (st.setup && st.setup.length ? '<ol class="note">' + st.setup.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') + '</ol>' : '') +
           '</div>';
       } else if (st.mode === 'supabase') {

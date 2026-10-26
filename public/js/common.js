@@ -70,7 +70,13 @@
       location.href = '/login';
       throw new Error('Please sign in.');
     }
-    if (!res.ok) throw new Error((data && data.error) || 'Request failed (' + res.status + ')');
+    if (!res.ok) {
+      var err = new Error((data && data.error) || 'Request failed (' + res.status + ')');
+      err.status = res.status;
+      err.data = data;
+      if (data && data.setup) err.setup = data.setup;
+      throw err;
+    }
     return data;
   }
 
