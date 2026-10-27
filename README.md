@@ -21,7 +21,7 @@ store-vercel/
 │   ├── backup-store.js   Backup storage: local folder or private Supabase Storage
 │   ├── stats.js          Day/week/month totals and 7-day chart queries
 │   └── schema.js         Loads database/schema.sql for the installer
-├── database/schema.sql   Tables: users, products, sales, sale_items, stock_movements
+├── database/schema.sql   Tables: users, categories, products, sales, sale_items, stock_movements
 ├── public/
 │   ├── html/             One page per original PHP screen
 │   ├── css/              base.css (theme) and app.css (page additions)
@@ -142,13 +142,16 @@ Postgres is running (local Docker: `docker start smartmart-pg`).
 - **Stock history** is written to `stock_movements` on sales, restocks and edits.
 - **CSV export works.** The PHP query used columns that do not exist (`transaction_no`, a join to `products`). The new export reads `sales` and `sale_items` and honors the report's date and search filters. Cells that start with `=`, `+`, `-` or `@` are escaped.
 - **Product form has a Category field** (the old form skipped it, so everything was "General").
+- **Automatic categories:** new items with a blank category are classified from their name (and an existing barcode's category when restocking). Owners can manage categories at `/categories`, rename or deactivate them, and merge one into another without touching product IDs or sales history. `Uncategorized` is the protected fallback.
 - **Logins:** failed attempts are slowed down, cookies are `HttpOnly`, `SameSite=Lax` and `Secure`, and write requests must be JSON (blocks cross-site form posts).
 
 ## Backup & Restore (owner only)
 
 The **Backup** page (`/backup`, owner-only — cashiers see a restricted page)
-protects all store data: users + password hashes, products, sales, sale items,
-stock movements, plus store/timezone metadata. Backups are portable JSON files
+protects all store data: users + password hashes, categories, products, sales,
+sale items, stock movements, plus store/timezone metadata. Older backups that
+predate categories are still accepted and rebuilt from product labels on
+restore. Backups are portable JSON files
 named `smartmart-backup-YYYYMMDD-HHMMSS-mmm-<kind>.json` (older files without
 the milliseconds part are still accepted), checksummed and verified before
 success is reported. No `pg_dump` binary or superuser rights needed.

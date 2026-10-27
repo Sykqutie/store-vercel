@@ -11,6 +11,11 @@
   var status = ['low', 'out', 'expiring', 'expired'].indexOf(A.qs('status')) >= 0 ? A.qs('status') : '';
   var timer;
   var all = [];
+  var activeCategories = [];
+  var categoryFilter = '';
+  var categoryTouched = false;
+  var suggestTimer;
+  var suggestSeq = 0;
   var offlineMode = !A.isOnline();
   var sortKey = 'name', sortDir = 1;
 
@@ -21,7 +26,8 @@
     '<form id="f" class="stack">' +
     '<label for="barcode">Barcode<span class="bc-row"><input id="barcode" maxlength="64" required style="flex:1;min-width:0"><button class="btn sm" id="gen" type="button" title="Generate a scannable barcode">Generate</button></span></label>' +
     '<label for="name">Item name<input id="name" maxlength="150" required></label>' +
-    '<label for="category">Category<input id="category" maxlength="60" value="General" required></label>' +
+    '<label for="category">Category<input id="category" maxlength="60" list="categoryOptions" autocomplete="off" placeholder="Leave blank to auto-categorize"><datalist id="categoryOptions"></datalist></label>' +
+    '<div class="note" id="catHint" aria-live="polite">Leave blank to auto-categorize. Suggestions never replace a category you type.</div>' +
     '<div class="row2"><label for="cost">Cost price (₱)<input id="cost" type="number" step="0.01" min="0" required></label>' +
     '<label for="price">Selling price (₱)<input id="price" type="number" step="0.01" min="0" required></label></div>' +
     '<div class="row2"><label for="stock">Quantity to add<input id="stock" type="number" step="1" min="0" required></label>' +
@@ -33,8 +39,9 @@
     '<div class="panel pad" id="queuePanel" style="margin-top:14px"><div class="ph"><h2>Queued inventory changes</h2><span class="mono mute" id="queueMeta"></span></div>' +
     '<div class="btn-row" style="margin-bottom:10px"><button class="btn sm" id="syncNow" type="button">Sync now</button></div>' +
     '<div id="queueList"><div class="empty">No queued changes.</div></div></div></div>' +
-    '<div class="panel pad"><div class="ph"><h2>Inventory</h2><span class="inv-meta"><span class="mono mute" id="count"></span><span class="mono lk-total" id="invValue" aria-live="polite"></span></span></div>' +
+    '<div class="panel pad"><div class="ph"><h2>Inventory</h2><span class="inv-meta"><span class="mono mute" id="count"></span><span class="mono lk-total" id="invValue" aria-live="polite"></span><a class="btn sm" href="/categories">Manage categories</a></span></div>' +
     '<div class="toolbar"><input id="q" type="search" placeholder="Search name, barcode or category" aria-label="Search inventory">' +
+    '<select id="catFilter" class="cat-select" aria-label="Filter by category"><option value="">All categories</option></select>' +
     '<div class="chips" id="chips"></div></div>' +
     '<div class="tw"><table id="invTable"><thead><tr><th>Barcode (scan)</th><th class="sortable" data-sort="name" role="columnheader">Name <span class="sort-ind" data-ind="name"></span></th><th class="n">Cost</th><th class="n sortable" data-sort="price" role="columnheader">Price <span class="sort-ind" data-ind="price"></span></th><th class="sortable" data-sort="stock" role="columnheader">Stock <span class="sort-ind" data-ind="stock"></span></th><th class="sortable" data-sort="expiry_date" role="columnheader">Expiry <span class="sort-ind" data-ind="expiry_date"></span></th><th>Status</th><th></th></tr></thead><tbody id="body"></tbody></table></div>' +
     '</div></div>';
@@ -59,6 +66,92 @@
     A.$('#chips').innerHTML = [['', 'All'], ['low', 'Low stock'], ['out', 'Out of stock'], ['expiring', 'Expiring ≤30 days'], ['expired', 'Expired']].map(function (c) {
       return '<button class="chip" type="button" data-s="' + c[0] + '" aria-pressed="' + (status === c[0]) + '">' + c[1] + '</button>';
     }).join('');
+  }
+
+  function categoryNames() {
+    var seen = {};
+    var out = [];
+    all.forEach(function (p) {
+      var name = String(p.category || '').trim();
+      var key = name.toLowerCase();
+      if (name && !seen[key]) { seen[key] = true; out.push(name); }
+    });
+    out.sort(function (a, b) { return a.localeCompare(b); });
+    return out;
+  }
+
+  function choiceNames() {
+    var seen = {};
+    var out = [];
+    var source = activeCategories.length ? activeCategories : categoryNames();
+    source.forEach(function (name) {
+      name = String(name || '').trim();
+      var key = name.toLowerCase();
+      if (name && !seen[key]) { seen[key] = true; out.push(name); }
+    });
+    out.sort(function (a, b) { return a.localeCompare(b); });
+    return out;
+  }
+
+  function paintCategoryChoices() {
+    var filter = A.$('#catFilter');
+    var names = categoryNames();
+    if (categoryFilter && names.map(function (n) { return n.toLowerCase(); }).indexOf(categoryFilter.toLowerCase()) < 0) {
+      categoryFilter = '';
+    }
+    if (filter) {
+      filter.innerHTML = '<option value="">All categories</option>' + names.map(function (name) {
+        return '<option value="' + esc(name) + '">' + esc(name) + '</option>';
+      }).join('');
+      filter.value = categoryFilter;
+    }
+    var list = A.$('#categoryOptions');
+    if (list) {
+      list.innerHTML = choiceNames().map(function (name) {
+        return '<option value="' + esc(name) + '"></option>';
+      }).join('');
+    }
+  }
+
+  function setCategoryHint(text) {
+    var hint = A.$('#catHint');
+    if (hint) hint.textContent = text;
+  }
+
+  function resetCategoryField() {
+    categoryTouched = false;
+    suggestSeq++;
+    clearTimeout(suggestTimer);
+    A.$('#category').value = '';
+    setCategoryHint('Leave blank to auto-categorize. Suggestions never replace a category you type.');
+  }
+
+  function scheduleSuggestion() {
+    if (categoryTouched) return;
+    var name = A.$('#name').value.trim();
+    var barcode = A.$('#barcode').value.trim();
+    clearTimeout(suggestTimer);
+    if (!name && !barcode) {
+      A.$('#category').value = '';
+      setCategoryHint('Leave blank to auto-categorize. Suggestions never replace a category you type.');
+      return;
+    }
+    if (!A.isOnline()) {
+      setCategoryHint('Offline: this item will be categorized automatically when it syncs.');
+      return;
+    }
+    var seq = ++suggestSeq;
+    suggestTimer = setTimeout(function () {
+      A.api('/categories/suggest?name=' + encodeURIComponent(name) + '&barcode=' + encodeURIComponent(barcode)).then(function (r) {
+        if (seq !== suggestSeq || categoryTouched || !r || !r.suggestion) return;
+        A.$('#category').value = r.suggestion;
+        setCategoryHint(r.source === 'existing'
+          ? 'Existing barcode category. You can change it before saving.'
+          : r.source === 'keyword'
+            ? 'Suggested from the item name. You can change it before saving.'
+            : 'No keyword match, so Uncategorized will be used unless you choose a category.');
+      }).catch(function () { });
+    }, 300);
   }
 
   function paintSvg(svg) {
@@ -118,6 +211,7 @@
       if (status === 'out' && !(p.stock <= 0)) return false;
       if (status === 'expiring' && !(p.stock > 0 && days != null && days >= 0 && days <= 30)) return false;
       if (status === 'expired' && !(p.stock > 0 && days != null && days < 0)) return false;
+      if (categoryFilter && String(p.category).toLowerCase() !== categoryFilter.toLowerCase()) return false;
       if (q && String(p.name).toLowerCase().indexOf(q) < 0 && String(p.barcode).toLowerCase().indexOf(q) < 0 && String(p.category).toLowerCase().indexOf(q) < 0) return false;
       return true;
     });
@@ -242,6 +336,13 @@
         throw e;
       }
     }
+    if (A.isOnline()) {
+      try {
+        var cr = await A.api('/categories');
+        activeCategories = (cr.categories || []).map(function (c) { return c.name; });
+      } catch (e) { }
+    }
+    paintCategoryChoices();
     paintBanner();
     render();
     renderQueue();
@@ -276,6 +377,21 @@
     render();
   });
   A.$('#q').addEventListener('input', function () { clearTimeout(timer); timer = setTimeout(render, 150); });
+  A.$('#catFilter').addEventListener('change', function () {
+    categoryFilter = this.value;
+    render();
+  });
+  A.$('#name').addEventListener('input', scheduleSuggestion);
+  A.$('#barcode').addEventListener('input', scheduleSuggestion);
+  A.$('#category').addEventListener('input', function () {
+    categoryTouched = this.value.trim() !== '';
+    if (categoryTouched) {
+      setCategoryHint('Manual category. Automatic suggestions will not replace it.');
+    } else {
+      setCategoryHint('Leave blank to auto-categorize. Suggestions never replace a category you type.');
+      scheduleSuggestion();
+    }
+  });
   var genBtn = A.$('#gen');
   if (genBtn) genBtn.addEventListener('click', function () { A.$('#barcode').value = genBarcode(); A.$('#barcode').focus(); });
 
@@ -355,7 +471,7 @@
         await queueOfflineOp({ barcode: fields.barcode, name: fields.name, category: fields.category, cost_price: fields.cost_price, price: fields.price, stock: Number(fields.stock || 0), low_stock_threshold: Number(fields.threshold || 5), expiry_date: fields.expiry_date || null });
         A.toast('Saved offline — will sync when online.');
         A.$('#f').reset();
-        A.$('#category').value = 'General';
+        resetCategoryField();
         A.$('#threshold').value = '5';
         await renderQueue();
       } else {
@@ -370,7 +486,7 @@
           });
           A.toast(r.created ? 'Inventory item added' : 'Inventory item restocked');
           A.$('#f').reset();
-          A.$('#category').value = 'General';
+          resetCategoryField();
           A.$('#threshold').value = '5';
           await load();
           if (window.StockAlerts) { try { window.StockAlerts.notifyChanged(); } catch (x) {} }
@@ -379,7 +495,7 @@
             await queueOfflineOp({ barcode: fields.barcode, name: fields.name, category: fields.category, cost_price: fields.cost_price, price: fields.price, stock: Number(fields.stock || 0), low_stock_threshold: Number(fields.threshold || 5), expiry_date: fields.expiry_date || null });
             A.toast('Connection lost — queued for sync.', true);
             A.$('#f').reset();
-            A.$('#category').value = 'General';
+            resetCategoryField();
             A.$('#threshold').value = '5';
           } else {
             throw ex;

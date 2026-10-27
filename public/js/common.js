@@ -138,6 +138,7 @@
     ['dashboard', 'Dashboard', '/dashboard'],
     ['pos', 'POS', '/pos'],
     ['products', 'Inventory', '/inventory'],
+    ['categories', 'Categories', '/categories'],
     ['report', 'Reports', '/report'],
     ['users', 'Users', '/users'],
     ['backup', 'Backup', '/backup']

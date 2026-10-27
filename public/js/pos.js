@@ -9,6 +9,7 @@
   // POS cart (persisted locally; stock is always revalidated server-side at checkout).
   var cart = (window.CartStore ? window.CartStore.load() : []);
   var search = '';
+  var categoryFilter = '';
   var VAT = 12;        // prices include VAT; shown for information only (the server computes the real values)
   var offlineMode = !A.isOnline();
   // Cashiers are POS-only: they can sell but never see inventory numbers
@@ -20,7 +21,7 @@
     '<div class="offline-banner" id="offBanner" hidden></div>' +
     '<div class="bill">' +
     '<div class="panel pad"><div class="ph"><h2>' + (isCashier ? 'Select items' : 'Select inventory items') + '</h2><span class="mono mute" id="count"></span></div>' +
-    '<div class="toolbar"><input id="q" type="search" placeholder="Search by name or barcode" aria-label="Search items"></div>' +
+    '<div class="toolbar"><input id="q" type="search" placeholder="Search by name, barcode or category" aria-label="Search items"><select id="catFilter" class="cat-select" aria-label="Filter by category"><option value="">All categories</option></select></div>' +
     '<div class="toolbar" style="margin-bottom:6px"><input id="scan" style="flex:1 1 220px;max-width:380px" placeholder="Scan barcode, then press Enter" autocomplete="off" aria-label="Barcode"><button class="btn" id="scanBtn" type="button">Add</button></div>' +
     '<div class="mono mute" id="scanMsg" style="min-height:1.5em;margin-bottom:10px;font-size:12px"></div>' +
     '<div id="catalog" class="products"></div></div>' +
@@ -37,7 +38,7 @@
     '<div id="pendList"><div class="empty">No queued sales. Offline sales are saved here and sync when you reconnect.</div></div></div>';
 
   var el = {
-    q: A.$('#q'), scan: A.$('#scan'), msg: A.$('#scanMsg'), catalog: A.$('#catalog'), lines: A.$('#lines'),
+    q: A.$('#q'), catFilter: A.$('#catFilter'), scan: A.$('#scan'), msg: A.$('#scanMsg'), catalog: A.$('#catalog'), lines: A.$('#lines'),
     tender: A.$('#tender'), sum: A.$('#sum'), charge: A.$('#charge'), err: A.$('#err'),
     quick: A.$('#quick'), cashRow: A.$('#cashRow'), count: A.$('#count'),
     banner: A.$('#offBanner'), pendList: A.$('#pendList'), syncMeta: A.$('#syncMeta'), syncNow: A.$('#syncNow')
@@ -94,10 +95,28 @@
     } catch (e) { /* sound is optional */ }
   }
 
+  function paintCategoryFilter() {
+    var seen = {};
+    var names = products.map(function (p) { return String(p.category || '').trim(); }).filter(function (name) {
+      var key = name.toLowerCase();
+      if (!name || seen[key]) return false;
+      seen[key] = true;
+      return true;
+    }).sort(function (a, b) { return a.localeCompare(b); });
+    if (categoryFilter && names.map(function (n) { return n.toLowerCase(); }).indexOf(categoryFilter.toLowerCase()) < 0) {
+      categoryFilter = '';
+    }
+    el.catFilter.innerHTML = '<option value="">All categories</option>' + names.map(function (name) {
+      return '<option value="' + esc(name) + '">' + esc(name) + '</option>';
+    }).join('');
+    el.catFilter.value = categoryFilter;
+  }
+
   function renderCatalog() {
     var q = search.toLowerCase();
     var list = products.filter(function (p) {
-      return !q || String(p.name).toLowerCase().indexOf(q) > -1 || String(p.barcode).toLowerCase().indexOf(q) > -1;
+      if (categoryFilter && String(p.category).toLowerCase() !== categoryFilter.toLowerCase()) return false;
+      return !q || String(p.name).toLowerCase().indexOf(q) > -1 || String(p.barcode).toLowerCase().indexOf(q) > -1 || String(p.category).toLowerCase().indexOf(q) > -1;
     });
     el.count.textContent = products.length + ' items' + (offlineMode ? ' (cached)' : '');
     el.catalog.innerHTML = list.length ? list.map(function (p) {
@@ -234,6 +253,7 @@
     }).filter(function (l) { return l.qty > 0; });
     if (droppedExpired) A.toast('Expired item removed from the cart.', true);
     paintBanner();
+    paintCategoryFilter();
     renderCart();
     renderPending();
   }
@@ -259,7 +279,7 @@
     try {
       var r = await A.api('/lookup?code=' + encodeURIComponent(code));
       var p = byId(r.product.id);
-      if (!p) { products.push(r.product); }
+      if (!p) { products.push(r.product); paintCategoryFilter(); }
       else { p.stock = r.product.stock; p.price = r.product.price; }
       if (add(r.product.id)) { say('Added: ' + r.product.name + ' (' + r.product.barcode + ')', true); beep(true); }
     } catch (e) {
@@ -364,6 +384,7 @@
         var fresh = await A.api('/products');
         products = fresh.products;
         freshOk = true;
+        paintCategoryFilter();
         if (window.LocalDB) { try { await window.LocalDB.saveProducts(products); } catch (e) {} }
       } catch (e) { /* receipt still works */ }
       if (window.StockAlerts) {
@@ -418,6 +439,7 @@
     if (b) { el.tender.value = b.dataset.amt; renderSummary(); }
   });
   el.q.addEventListener('input', function () { search = el.q.value; renderCatalog(); });
+  el.catFilter.addEventListener('change', function () { categoryFilter = el.catFilter.value; renderCatalog(); });
   el.tender.addEventListener('input', renderSummary);
   el.scan.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); scanAdd(); } });
   A.$('#scanBtn').addEventListener('click', scanAdd);

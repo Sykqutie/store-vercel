@@ -14,6 +14,7 @@
     { "source": "/products", "destination": "/html/products.html" },
     { "source": "/inventory", "destination": "/html/products.html" },
     { "source": "/edit-product", "destination": "/html/edit-product.html" },
+    { "source": "/categories", "destination": "/html/categories.html" },
     { "source": "/report", "destination": "/html/report.html" },
     { "source": "/receipt", "destination": "/html/receipt.html" },
     { "source": "/users", "destination": "/html/users.html" },

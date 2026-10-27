@@ -31,7 +31,8 @@
     '<div class="bc-meta"><span class="mono mute">Scannable at POS · CODE128</span><button class="btn sm" id="printBc" type="button">Print label</button></div></div>' +
     '<form id="f" class="stack">' +
     '<label for="name">Item name<input id="name" maxlength="150" required value="' + esc(p.name) + '"></label>' +
-    '<label for="category">Category<input id="category" maxlength="60" required value="' + esc(p.category) + '"></label>' +
+    '<label for="category">Category<span class="bc-row"><input id="category" maxlength="60" list="categoryOptions" autocomplete="off" required value="' + esc(p.category) + '"><button class="btn sm" id="suggestCat" type="button">Suggest</button></span><datalist id="categoryOptions"></datalist></label>' +
+    '<div class="note" id="catHint">The saved category is never changed automatically. Use Suggest only when you want a new recommendation.</div>' +
     '<div class="row2"><label for="cost">Cost price (₱)<input id="cost" type="number" step="0.01" min="0" required value="' + p.cost_price + '"></label>' +
     '<label for="price">Price (₱)<input id="price" type="number" step="0.01" min="0" required value="' + p.price + '"></label></div>' +
     '<div class="row2"><label for="stock">Stock quantity<input id="stock" type="number" step="1" min="0" required value="' + p.stock + '"></label>' +
@@ -50,6 +51,50 @@
       });
     }
   } catch (e) { /* keep text fallback */ }
+
+  var catNames = [String(p.category || '').trim()];
+  if (A.isOnline()) {
+    try {
+      var cr = await A.api('/categories');
+      catNames = catNames.concat((cr.categories || []).map(function (c) { return c.name; }));
+    } catch (e) { }
+  }
+  var seenCats = {};
+  A.$('#categoryOptions').innerHTML = catNames.filter(function (name) {
+    name = String(name || '').trim();
+    var key = name.toLowerCase();
+    if (!name || seenCats[key]) return false;
+    seenCats[key] = true;
+    return true;
+  }).sort(function (a, b) { return a.localeCompare(b); }).map(function (name) {
+    return '<option value="' + esc(name) + '"></option>';
+  }).join('');
+
+  A.$('#category').addEventListener('input', function () {
+    A.$('#catHint').textContent = this.value.trim()
+      ? 'Manual category. The saved category is only changed when you save.'
+      : 'Required. Ask the owner to choose or reactivate a category.';
+  });
+  A.$('#suggestCat').addEventListener('click', async function () {
+    var btn = this;
+    var name = A.$('#name').value.trim();
+    if (!name) { A.$('#catHint').textContent = 'Enter an item name first.'; return; }
+    if (!A.isOnline()) { A.$('#catHint').textContent = 'Suggestions need a connection.'; return; }
+    btn.disabled = true;
+    try {
+      var r = await A.api('/categories/suggest?name=' + encodeURIComponent(name));
+      if (r && r.suggestion) {
+        A.$('#category').value = r.suggestion;
+        A.$('#catHint').textContent = r.source === 'keyword'
+          ? 'Suggested from the item name. Review it before saving.'
+          : 'No keyword match, so Uncategorized is suggested.';
+      }
+    } catch (e) {
+      A.$('#catHint').textContent = e.message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
   A.$('#printBc').addEventListener('click', function () {
     var code = String(p.barcode).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     var w = window.open('', '_blank', 'width=420,height=360');

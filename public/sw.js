@@ -1,8 +1,8 @@
 /* Convenience Store POS service worker: offline-first app shell, network-only API. */
 'use strict';
 
-var CACHE = 'store-pos-v21';
-var RUNTIME = 'store-pos-rt-v21';
+var CACHE = 'store-pos-v22';
+var RUNTIME = 'store-pos-rt-v22';
 
 // Bump this list when shell files change.
 var PRECACHE = [
@@ -12,6 +12,7 @@ var PRECACHE = [
   '/cashier',
   '/inventory',
   '/products',
+  '/categories',
   '/report',
   '/receipt',
   '/users',
@@ -29,6 +30,7 @@ var PRECACHE = [
   '/html/pos.html',
   '/html/products.html',
   '/html/edit-product.html',
+  '/html/categories.html',
   '/html/report.html',
   '/html/receipt.html',
   '/html/users.html',
@@ -55,6 +57,7 @@ var PRECACHE = [
   '/js/pos.js',
   '/js/products.js',
   '/js/edit-product.js',
+  '/js/categories.js',
   '/js/report.js',
   '/js/receipt.js',
   '/js/users.js',

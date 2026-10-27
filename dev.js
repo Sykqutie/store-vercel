@@ -37,7 +37,7 @@ const app = require('./api/index.js');
 const PAGES = {
   '/': 'index', '/login': 'login', '/install': 'install', '/dashboard': 'dashboard', '/pos': 'pos',
   '/cashier': 'pos', // cashier landing alias: serves the existing POS checkout page (no duplicate page)
-  '/products': 'products', '/inventory': 'products', '/edit-product': 'edit-product', '/report': 'report', '/receipt': 'receipt', '/users': 'users', '/backup': 'backup', '/offline': 'offline',
+  '/products': 'products', '/inventory': 'products', '/edit-product': 'edit-product', '/categories': 'categories', '/report': 'report', '/receipt': 'receipt', '/users': 'users', '/backup': 'backup', '/offline': 'offline',
   '/forgot-password': 'forgot-password', // public owner-recovery info page (no reset endpoint; see scripts/recover-owner.js)
 };
 

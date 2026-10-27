@@ -1,5 +1,19 @@
 # SmartMart POS - Supabase connection plan (status: connected, data merged, deployed)
 
+## Category management update (pending deployment)
+
+- Adds a managed `categories` table plus `/categories` owner page and API.
+- `products.category` stays a denormalized string; there is no product-category FK.
+- New products with a blank category are classified from the item name
+  (restocks reuse their existing barcode category first), then `Uncategorized`.
+- `Uncategorized` is the protected fallback. Owners can rename, deactivate,
+  reactivate, or merge categories; merges update product labels and preserve IDs.
+- The API creates/backfills the table on first use, so the first production
+  request after deploy performs the migration. It has not been run against
+  production yet.
+- Backups now include categories. Restoring an older backup without categories
+  rebuilds the table from default names and existing product labels.
+
 ## Where things stand
 
 - The app talks to Postgres **server-side only** (`pg` + `lib/db.js`). No browser

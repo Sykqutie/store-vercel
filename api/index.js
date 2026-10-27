@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const db = require('../lib/db');
 const auth = require('../lib/auth');
 const SCHEMA = require('../lib/schema');
+const categories = require('../lib/categories');
 const { tz, periodStats, chart7 } = require('../lib/stats');
 
 const app = express();
@@ -61,6 +62,8 @@ const dateOnly = (v) => {
   return s;
 };
 const PRODUCT_COLS = `id, barcode, name, category, cost_price::float8 AS cost_price, price::float8 AS price, stock, low_stock_threshold, to_char(expiry_date, 'YYYY-MM-DD') AS expiry_date`;
+const FALLBACK_CATEGORY = categories.FALLBACK_CATEGORY;
+const CATEGORY_COLS = 'id, name, active, created_at, updated_at';
 // Cashiers get POS only — no inventory management. Cost, thresholds and
 // margins are owner data, so they are stripped from every product/sale
 // payload a cashier can read. Stock stays (the POS needs it to block
@@ -153,6 +156,79 @@ function ensureAlertSchema() {
 }
 ensureAlertSchema();
 
+let categorySchemaMigration = null;
+function ensureCategorySchema() {
+  if (!categorySchemaMigration) {
+    categorySchemaMigration = (async () => {
+      try {
+        await db.query(`CREATE TABLE IF NOT EXISTS categories (
+          id          SERIAL PRIMARY KEY,
+          name        VARCHAR(60) NOT NULL,
+          active      BOOLEAN     NOT NULL DEFAULT TRUE,
+          created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+          updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+        )`);
+        await db.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_name_lower ON categories (lower(name))');
+        await db.query('CREATE INDEX IF NOT EXISTS idx_categories_active ON categories (active)');
+        const { rows: [count] } = await db.query('SELECT COUNT(*)::int AS n FROM categories');
+        if (!count || count.n === 0) {
+          await db.query(
+            'INSERT INTO categories (name) SELECT x FROM unnest($1::text[]) AS x ON CONFLICT DO NOTHING',
+            [categories.DEFAULT_CATEGORIES]
+          );
+        }
+        await db.query(
+          `INSERT INTO categories (name)
+           SELECT DISTINCT TRIM(category) FROM products
+           WHERE category IS NOT NULL AND TRIM(category) <> ''
+           ON CONFLICT DO NOTHING`
+        );
+      } catch (e) {
+        console.error('category schema migration deferred:', e.message);
+        categorySchemaMigration = null;
+      }
+    })();
+  }
+  return categorySchemaMigration;
+}
+ensureCategorySchema();
+
+async function categoryByName(name, runner) {
+  const q = runner || db;
+  const { rows: [row] } = await q.query(
+    `SELECT ${CATEGORY_COLS} FROM categories WHERE lower(name) = lower($1)`,
+    [name]
+  );
+  return row || null;
+}
+
+async function ensureCategoryRow(name, runner) {
+  const clean = categories.cleanName(name);
+  if (!clean) return null;
+  const q = runner || db;
+  const found = await categoryByName(clean, q);
+  if (found) return found;
+  const { rows: [created] } = await q.query(
+    `INSERT INTO categories (name) VALUES ($1) ON CONFLICT DO NOTHING RETURNING ${CATEGORY_COLS}`,
+    [clean]
+  );
+  return created || categoryByName(clean, q);
+}
+
+async function autoCategoryForProduct(name, barcode) {
+  const { rows: [existing] } = await db.query('SELECT category FROM products WHERE barcode = $1', [barcode]);
+  if (existing && existing.category) {
+    const row = await categoryByName(existing.category);
+    if (row) return row.active ? row.name : existing.category;
+    return existing.category;
+  }
+  const suggested = categories.classifyName(name);
+  const row = await categoryByName(suggested);
+  if (row && row.active) return row.name;
+  const fallback = await ensureCategoryRow(FALLBACK_CATEGORY);
+  return fallback ? fallback.name : FALLBACK_CATEGORY;
+}
+
 // Session + fresh account state (role / active) from the database.
 // Replaces the stateless requireAuth below so deactivation and role changes
 // apply immediately, without leaking which check failed to logged-out users.
@@ -239,6 +315,7 @@ api.post('/install', wrap(async (req, res) => {
   await ensureOfflineColumns();
   await ensureAccountColumns();
   await ensureAlertSchema();
+  await ensureCategorySchema();
   const { rows: [c] } = await db.query('SELECT COUNT(*)::int AS n FROM users');
   if (c.n > 0) return bad(res, 'Already installed. Sign in instead.', 403);
 
@@ -637,6 +714,176 @@ api.get('/alerts/low-stock', loadAccount, requireOwner, wrap(async (req, res) =>
   });
 }));
 
+// ---------- categories ----------
+api.get('/categories', loadAccount, wrap(async (req, res) => {
+  await ensureCategorySchema();
+  const includeInactive = req.user.role === 'owner' && String(req.query.all || '') === '1';
+  const where = includeInactive ? '' : 'WHERE c.active = TRUE';
+  const { rows } = await db.query(
+    `SELECT c.id, c.name, c.active, c.created_at, c.updated_at,
+            COUNT(p.id)::int AS product_count
+     FROM categories c
+     LEFT JOIN products p ON lower(p.category) = lower(c.name)
+     ${where}
+     GROUP BY c.id
+     ORDER BY c.active DESC, lower(c.name) ASC`
+  );
+  res.json({
+    categories: rows.map((c) => ({
+      ...c,
+      is_fallback: String(c.name).toLowerCase() === FALLBACK_CATEGORY.toLowerCase()
+    }))
+  });
+}));
+
+api.get('/categories/suggest', loadAccount, requireOwner, wrap(async (req, res) => {
+  await ensureCategorySchema();
+  const name = text(req.query.name, 150);
+  const barcode = text(req.query.barcode, 64);
+  if (!name && !barcode) return bad(res, 'Enter an item name or barcode.');
+
+  let suggestion = null;
+  let source = null;
+  if (barcode) {
+    const { rows: [existing] } = await db.query('SELECT category FROM products WHERE barcode = $1', [barcode]);
+    if (existing && existing.category) {
+      const row = await categoryByName(existing.category);
+      if (row && row.active) {
+        suggestion = row.name;
+        source = 'existing';
+      }
+    }
+  }
+  if (!suggestion && name) {
+    const row = await categoryByName(categories.classifyName(name));
+    if (row && row.active) {
+      suggestion = row.name;
+      source = 'keyword';
+    }
+  }
+  if (!suggestion) {
+    const fallback = await categoryByName(FALLBACK_CATEGORY);
+    suggestion = fallback && fallback.active ? fallback.name : FALLBACK_CATEGORY;
+    source = 'fallback';
+  }
+  res.json({ suggestion, source });
+}));
+
+api.post('/categories', loadAccount, requireOwner, wrap(async (req, res) => {
+  await ensureCategorySchema();
+  const name = categories.cleanName(req.body.name);
+  if (!name) return bad(res, 'Category name is required and must be 60 characters or fewer.');
+  const existing = await categoryByName(name);
+  if (existing) {
+    return res.status(409).json({
+      error: existing.active
+        ? 'That category already exists.'
+        : 'That category already exists but is inactive. Reactivate it or choose another name.',
+      category: existing
+    });
+  }
+  const { rows: [created] } = await db.query(
+    `INSERT INTO categories (name) VALUES ($1) ON CONFLICT DO NOTHING RETURNING ${CATEGORY_COLS}`,
+    [name]
+  );
+  if (!created) return bad(res, 'That category already exists.', 409);
+  res.status(201).json({ category: { ...created, product_count: 0, is_fallback: false } });
+}));
+
+api.put('/categories/:id', loadAccount, requireOwner, wrap(async (req, res) => {
+  await ensureCategorySchema();
+  const id = number(req.params.id, { min: 1, int: true });
+  if (!id) return bad(res, 'Category not found.', 404);
+
+  let requestedName;
+  if (req.body.name !== undefined) {
+    requestedName = categories.cleanName(req.body.name);
+    if (!requestedName) return bad(res, 'Category name is required and must be 60 characters or fewer.');
+  }
+  if (req.body.active !== undefined && typeof req.body.active !== 'boolean') {
+    return bad(res, 'Active must be true or false.');
+  }
+
+  const result = await db.tx(async (c) => {
+    const { rows: [old] } = await c.query(
+      `SELECT ${CATEGORY_COLS} FROM categories WHERE id = $1 FOR UPDATE`,
+      [id]
+    );
+    if (!old) return { missing: true };
+
+    const name = requestedName === undefined ? old.name : requestedName;
+    const active = req.body.active === undefined ? old.active : req.body.active;
+    const isFallback = String(old.name).toLowerCase() === FALLBACK_CATEGORY.toLowerCase();
+    if (isFallback && (name !== old.name || active !== true)) {
+      return { system: true };
+    }
+    if (name !== old.name) {
+      const duplicate = await categoryByName(name, c);
+      if (duplicate && duplicate.id !== old.id) return { duplicate: true };
+    }
+
+    await c.query(
+      'UPDATE categories SET name = $1, active = $2, updated_at = now() WHERE id = $3',
+      [name, active, id]
+    );
+    let moved = 0;
+    if (name !== old.name) {
+      const updated = await c.query(
+        'UPDATE products SET category = $1 WHERE lower(category) = lower($2)',
+        [name, old.name]
+      );
+      moved = updated.rowCount || 0;
+    }
+    return { category: { ...old, name, active, updated_at: new Date().toISOString() }, moved };
+  });
+
+  if (result.missing) return bad(res, 'Category not found.', 404);
+  if (result.system) return bad(res, 'Uncategorized is the fallback category and must stay active.');
+  if (result.duplicate) return bad(res, 'Another category already uses that name.', 409);
+  res.json({ ok: true, category: result.category, products_updated: result.moved });
+}));
+
+api.post('/categories/:id/merge', loadAccount, requireOwner, wrap(async (req, res) => {
+  await ensureCategorySchema();
+  const sourceId = number(req.params.id, { min: 1, int: true });
+  const targetId = number(req.body.target_id, { min: 1, int: true });
+  if (!sourceId || !targetId) return bad(res, 'Choose a source and target category.');
+  if (sourceId === targetId) return bad(res, 'Choose a different category to merge into.');
+
+  const result = await db.tx(async (c) => {
+    const { rows: [source] } = await c.query(
+      `SELECT ${CATEGORY_COLS} FROM categories WHERE id = $1 FOR UPDATE`,
+      [sourceId]
+    );
+    const { rows: [target] } = await c.query(
+      `SELECT ${CATEGORY_COLS} FROM categories WHERE id = $1 FOR UPDATE`,
+      [targetId]
+    );
+    if (!source || !target) return { missing: true };
+    if (String(source.name).toLowerCase() === FALLBACK_CATEGORY.toLowerCase()) {
+      return { system: true };
+    }
+    if (!target.active) return { targetInactive: true };
+
+    const updated = await c.query(
+      'UPDATE products SET category = $1 WHERE lower(category) = lower($2)',
+      [target.name, source.name]
+    );
+    await c.query('DELETE FROM categories WHERE id = $1', [sourceId]);
+    return { moved: updated.rowCount || 0, target: target.name, source: source.name };
+  });
+
+  if (result.missing) return bad(res, 'Category not found.', 404);
+  if (result.system) return bad(res, 'Uncategorized is the fallback category and cannot be merged away.');
+  if (result.targetInactive) return bad(res, 'Choose an active category to merge into.');
+  res.json({
+    ok: true,
+    source: result.source,
+    target: result.target,
+    products_moved: result.moved
+  });
+}));
+
 // ---------- products ----------
 // Cashiers may read the catalog (the POS needs it) but never manage it.
 // Cost price and low-stock thresholds are stripped for cashiers (see
@@ -644,12 +891,17 @@ api.get('/alerts/low-stock', loadAccount, requireOwner, wrap(async (req, res) =>
 api.get('/products', wrap(async (req, res) => {
   await ensureAlertSchema();
   const q = text(req.query.q, 100);
+  const category = text(req.query.category, 60);
   const status = String(req.query.status || '');
   const where = [];
   const params = [];
   if (q) {
     params.push(likePattern(q));
     where.push(`(name ILIKE $${params.length} OR barcode ILIKE $${params.length} OR category ILIKE $${params.length})`);
+  }
+  if (category) {
+    params.push(category);
+    where.push(`lower(category) = lower($${params.length})`);
   }
   const expiryFilter = status === 'expiring' || status === 'expired';
   if (expiryFilter) params.push(tz());
@@ -681,19 +933,31 @@ api.get('/products/:id', wrap(async (req, res) => {
 // Add a product, or restock an existing barcode (owner only; stock is added to what is on hand).
 api.post('/products', loadAccount, requireOwner, wrap(async (req, res) => {
   await ensureAlertSchema();
+  await ensureCategorySchema();
   const b = req.body;
   const barcode = text(b.barcode, 64);
   const name = text(b.name, 150);
-  const category = text(b.category, 60) || 'General';
+  const suppliedCategory = b.category === undefined || b.category === null ? '' : String(b.category).trim();
+  const requestedCategory = suppliedCategory ? categories.cleanName(suppliedCategory) : null;
   const cost = number(b.cost_price, { max: 1e7 });
   const price = number(b.price, { max: 1e7 });
   const stock = number(b.stock, { max: 1e6, int: true });
   const threshold = number(b.low_stock_threshold, { max: 1e6, int: true });
   const expiry = b.expiry_date === undefined ? null : dateOnly(b.expiry_date);
   if (!barcode || !name) return bad(res, 'Barcode and item name are required.');
+  if (suppliedCategory && !requestedCategory) return bad(res, 'Category must be 60 characters or fewer.');
   if (cost === null || price === null) return bad(res, 'Enter valid cost and selling prices.');
   if (stock === null || threshold === null) return bad(res, 'Stock and threshold must be whole numbers, 0 or more.');
   if (expiry === undefined) return bad(res, 'Expiration date must be a valid date (YYYY-MM-DD).');
+
+  let category;
+  if (requestedCategory) {
+    const row = await ensureCategoryRow(requestedCategory);
+    if (!row || !row.active) return bad(res, 'That category is inactive. Choose another or reactivate it.');
+    category = row.name;
+  } else {
+    category = await autoCategoryForProduct(name, barcode);
+  }
 
   const { rows: [r] } = await db.query(
     `INSERT INTO products (barcode, name, category, cost_price, price, stock, low_stock_threshold, expiry_date)
@@ -711,15 +975,17 @@ api.post('/products', loadAccount, requireOwner, wrap(async (req, res) => {
       [r.id, name, stock, r.inserted ? 'initial' : 'restock', 'Added from Products page']
     );
   }
-  res.json({ ok: true, id: r.id, created: r.inserted });
+  res.json({ ok: true, id: r.id, created: r.inserted, category });
 }));
 
 api.put('/products/:id', loadAccount, requireOwner, wrap(async (req, res) => {
   await ensureAlertSchema();
+  await ensureCategorySchema();
   const id = number(req.params.id, { min: 1, int: true });
   const b = req.body;
   const name = text(b.name, 150);
-  const category = text(b.category, 60);
+  const suppliedCategory = b.category === undefined || b.category === null ? '' : String(b.category).trim();
+  const requestedCategory = suppliedCategory ? categories.cleanName(suppliedCategory) : null;
   const price = number(b.price, { max: 1e7 });
   const cost = b.cost_price === undefined ? undefined : number(b.cost_price, { max: 1e7 });
   const stock = number(b.stock, { max: 1e6, int: true });
@@ -733,6 +999,7 @@ api.put('/products/:id', loadAccount, requireOwner, wrap(async (req, res) => {
   const baseStock = (b.base_stock === undefined || b.base_stock === null || b.base_stock === '') ? undefined : number(b.base_stock, { max: 1e6, int: true });
   if (!id) return bad(res, 'Product not found.', 404);
   if (!name) return bad(res, 'Product name is required.');
+  if (suppliedCategory && !requestedCategory) return bad(res, 'Category must be 60 characters or fewer.');
   if (price === null) return bad(res, 'Enter a valid price.');
   if (cost === null) return bad(res, 'Enter a valid cost price.');
   if (stock === null || threshold === null) return bad(res, 'Stock and threshold must be whole numbers, 0 or more.');
@@ -751,10 +1018,18 @@ api.put('/products/:id', loadAccount, requireOwner, wrap(async (req, res) => {
     if (baseStock !== undefined && old.stock !== baseStock) {
       return { conflict: true, current_stock: old.stock };
     }
+    let nextCategory = old.category;
+    if (requestedCategory) {
+      const row = await ensureCategoryRow(requestedCategory, c);
+      if (row && !row.active && String(row.name).toLowerCase() !== String(old.category).toLowerCase()) {
+        return { inactiveCategory: true };
+      }
+      if (row) nextCategory = row.name;
+    }
     await c.query(
       `UPDATE products SET name=$1, price=$2, stock=$3, low_stock_threshold=$4, cost_price=$5, category=$6,
               expiry_date=$7, updated_at=now() WHERE id=$8`,
-      [name, price, stock, threshold, cost === undefined ? old.cost_price : cost, category || old.category,
+      [name, price, stock, threshold, cost === undefined ? old.cost_price : cost, nextCategory,
         expiry === undefined ? old.expiry_date : expiry, id]
     );
     if (stock !== old.stock) {
@@ -766,6 +1041,7 @@ api.put('/products/:id', loadAccount, requireOwner, wrap(async (req, res) => {
     return true;
   });
   if (!found) return bad(res, 'Product not found.', 404);
+  if (found.inactiveCategory) return bad(res, 'That category is inactive. Choose another or reactivate it.');
   if (found.conflict) {
     return res.status(409).json({
       error: `Inventory changed on the server (now ${found.current_stock} in stock). Refresh and retry your edit.`,

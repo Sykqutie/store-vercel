@@ -106,7 +106,7 @@
         product_id: op.product_id ? Number(op.product_id) : null,
         barcode: String(op.barcode || ''),
         name: String(op.name || ''),
-        category: String(op.category || 'General'),
+        category: String(op.category || ''),
         cost_price: Number(op.cost_price || 0),
         price: Number(op.price || 0),
         stock: Number(op.stock || 0),

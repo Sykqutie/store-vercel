@@ -31,6 +31,16 @@ CREATE INDEX IF NOT EXISTS idx_products_category ON products (category);
 CREATE INDEX IF NOT EXISTS idx_products_stock    ON products (stock);
 CREATE INDEX IF NOT EXISTS idx_products_expiry   ON products (expiry_date);
 
+CREATE TABLE IF NOT EXISTS categories (
+  id          SERIAL PRIMARY KEY,
+  name        VARCHAR(60) NOT NULL,
+  active      BOOLEAN     NOT NULL DEFAULT TRUE,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_name_lower ON categories (lower(name));
+CREATE INDEX IF NOT EXISTS idx_categories_active ON categories (active);
+
 -- Per-user dismissals for non-critical notifications. The underlying product
 -- and its alert are never deleted; a dismissal only hides a warning until the
 -- product is restocked (the API prunes stale keys) or its state escalates.

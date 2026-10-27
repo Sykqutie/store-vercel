@@ -217,7 +217,12 @@ th .sort-ind{color:var(--cyan);font-size:10px}
 .inv-full{display:block;min-width:0}
 .inv-full .inv-panel{width:100%;max-width:none}
 .inv-head{margin-bottom:12px}
-.inv-meta{display:inline-flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.inv-meta{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.cat-select{flex:0 1 190px;min-width:140px;max-width:240px}
+.cat-input{min-width:180px}
+.cat-sub{font-size:11px;margin-top:3px}
+.cat-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+@media (max-width:600px){.cat-select{flex:1 1 100%;max-width:none}.cat-input{min-width:0}}
 .inv-toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
 .inv-toolbar input[type=search]{flex:2 1 240px;min-width:0}
 .scan-wrap{flex:3 1 320px;min-width:min(100%,280px);display:flex;gap:8px;align-items:center}
