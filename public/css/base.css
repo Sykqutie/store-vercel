@@ -27,6 +27,9 @@ body{margin:0}
   --font-d:'Chakra Petch',system-ui,sans-serif;
   --font-b:'Manrope',system-ui,sans-serif;
   --font-m:'JetBrains Mono',ui-monospace,Menlo,monospace;
+  --brand-font:Arial,Helvetica,sans-serif;
+  --brand-green:#58A447;
+  --brand-blue:#2379A3;
 }
 *{box-sizing:border-box}
 body{background:var(--bg);color:var(--fg);font-family:var(--font-b);font-size:14px;line-height:1.5;padding-inline:clamp(16px,3vw,36px);padding-block:20px 40px;min-height:100%;overflow-x:hidden}

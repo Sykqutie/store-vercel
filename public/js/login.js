@@ -6,7 +6,7 @@
   A.root.innerHTML =
     '<div class="auth-wrap"><div class="panel auth">' +
     '<img src="/logo-full.svg" alt="SmartMart — Shop easy. Live easy." width="210" style="align-self:center;max-width:100%;height:auto">' +
-    '<h1>SMART<span style="color:var(--cyan)">MART</span></h1>' +
+    '<h1>Smart<span>Mart</span></h1>' +
     '<p>POS &amp; Inventory · Secure access</p>' +
     '<div id="notice"></div>' +
     '<form id="f" class="stack" autocomplete="on">' +
