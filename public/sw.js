@@ -1,8 +1,8 @@
 /* Convenience Store POS service worker: offline-first app shell, network-only API. */
 'use strict';
 
-var CACHE = 'store-pos-v20';
-var RUNTIME = 'store-pos-rt-v20';
+var CACHE = 'store-pos-v21';
+var RUNTIME = 'store-pos-rt-v21';
 
 // Bump this list when shell files change.
 var PRECACHE = [
@@ -35,15 +35,20 @@ var PRECACHE = [
   '/html/backup.html',
   '/html/offline.html',
   '/css/base.css',
+  '/css/base.css?v=20261027',
   '/css/app.css',
+  '/css/app.css?v=20261027',
   '/js/common.js',
+  '/js/common.js?v=20261027',
   '/js/idb.js',
   '/js/sync.js',
   '/js/pwa.js',
+  '/js/pwa.js?v=20261027',
   '/js/alerts.js',
   '/js/cart.js',
   '/js/index.js',
   '/js/login.js',
+  '/js/login.js?v=20261027',
   '/js/install.js',
   '/js/forgot-password.js',
   '/js/dashboard.js',
@@ -157,7 +162,7 @@ function networkFirstStatic(request) {
     }
     return res;
   }).catch(function () {
-    return caches.match(request, { ignoreSearch: false }).then(function (hit) {
+    return caches.match(request, { ignoreSearch: true }).then(function (hit) {
       return hit || new Response('', { status: 503, statusText: 'Offline' });
     });
   });
