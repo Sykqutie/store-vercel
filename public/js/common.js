@@ -18,6 +18,24 @@
   function fmtDT(d) {
     return new Date(d).toLocaleString('en-PH', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   }
+  // Date-only helpers (YYYY-MM-DD). The comparison uses the store computer's
+  // local calendar day, which matches the store time zone used by the API.
+  function daysUntil(dateStr) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateStr || ''));
+    if (!m) return null;
+    var now = new Date();
+    var today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+    var target = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    if (!isFinite(target)) return null;
+    return Math.round((target - today) / 86400000);
+  }
+  function fmtDate(dateStr) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateStr || ''));
+    if (!m) return '—';
+    var d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+    if (isNaN(d.getTime())) return '—';
+    return d.toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' });
+  }
   function qs(name) { return new URLSearchParams(location.search).get(name); }
 
   function isOnline() {
@@ -205,12 +223,12 @@
     }).join('');
     var initial = esc(String(me.username || '?').charAt(0).toUpperCase());
     var role = esc(me.role || 'owner');
-    // Low-stock bell is an owner tool; cashiers get a clean checkout header.
+    // Inventory alerts are an owner tool; cashiers get a clean checkout header.
     var bellHtml = me.role === 'owner'
-      ? '<span class="bell-wrap"><button class="icon-btn" id="alertBell" type="button" aria-label="Stock alerts" aria-haspopup="true" aria-expanded="false" aria-controls="alertPanel" title="Stock alerts">' +
+      ? '<span class="bell-wrap"><button class="icon-btn" id="alertBell" type="button" aria-label="Inventory alerts" aria-haspopup="true" aria-expanded="false" aria-controls="alertPanel" title="Inventory alerts">' +
         '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg>' +
         '<span class="badge" id="alertBadge" hidden></span></button>' +
-        '<div class="alert-panel" id="alertPanel" role="region" aria-label="Low stock alerts" hidden></div></span>'
+        '<div class="alert-panel" id="alertPanel" role="region" aria-label="Inventory alerts" hidden></div></span>'
       : '';
     root.innerHTML =
       '<header class="top"><div class="brand">' +
@@ -301,5 +319,5 @@
     return document.getElementById('main');
   }
 
-  window.App = { $: $, esc: esc, money: money, fmtDT: fmtDT, qs: qs, api: api, toast: toast, countTo: countTo, reveal: reveal, mountShell: mountShell, root: root, isOnline: isOnline, noteRefreshed: noteRefreshed, me: session };
+  window.App = { $: $, esc: esc, money: money, fmtDT: fmtDT, fmtDate: fmtDate, daysUntil: daysUntil, qs: qs, api: api, toast: toast, countTo: countTo, reveal: reveal, mountShell: mountShell, root: root, isOnline: isOnline, noteRefreshed: noteRefreshed, me: session };
 })();

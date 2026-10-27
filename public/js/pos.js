@@ -48,6 +48,12 @@
   var cartQty = function (id) { var l = cart.filter(function (x) { return x.id === id; })[0]; return l ? l.qty : 0; };
   var tendered = function () { return Number(String(el.tender.value).replace(/,/g, '')) || 0; };
   var netErr = function (e) { return /Failed to fetch|NetworkError|network|offline|Load failed/i.test(String((e && e.message) || e)); };
+  // An item expiring today is still sellable; anything before today is not.
+  var isExpired = function (p) { return !!(p && p.expiry_date && A.daysUntil(p.expiry_date) < 0); };
+  var expiresSoon = function (p) { var d = p && p.expiry_date ? A.daysUntil(p.expiry_date) : null; return d != null && d >= 0 && d <= 30; };
+  var expiredText = function (p) {
+    return isCashier ? 'Expired item — not sellable.' : p.name + ' expired on ' + A.fmtDate(p.expiry_date) + ' and cannot be sold.';
+  };
 
   function totals() {
     var sub = 0;
@@ -96,16 +102,20 @@
     el.count.textContent = products.length + ' items' + (offlineMode ? ' (cached)' : '');
     el.catalog.innerHTML = list.length ? list.map(function (p) {
       var left = p.stock - cartQty(p.id);
+      var expired = isExpired(p);
       var initials = String(p.name).split(/\s+/).slice(0, 2).map(function (w) { return w[0]; }).join('').toUpperCase();
       // Cashiers see availability only — never exact stock numbers.
-      var st = p.stock <= 0 ? 'Out of stock'
+      var st = expired ? 'EXPIRED — not sellable'
+        : p.stock <= 0 ? 'Out of stock'
         : isCashier ? 'Available'
         : left + ' left';
-      if (!isCashier && offlineMode && p.stock > 0) st += ' · cached';
-      return '<button class="pc" type="button" data-id="' + p.id + '"' + (left <= 0 ? ' disabled' : '') + '>' +
+      if (!expired && !isCashier && expiresSoon(p)) st += ' · expires ' + A.fmtDate(p.expiry_date);
+      else if (!expired && !isCashier && offlineMode && p.stock > 0) st += ' · cached';
+      return '<button class="pc' + (expired ? ' expired' : '') + '" type="button" data-id="' + p.id + '"' +
+        (left <= 0 || expired ? ' disabled' : '') + ' title="' + esc(expired ? 'Expired ' + A.fmtDate(p.expiry_date) : '') + '">' +
         '<span class="hx">' + esc(initials) + '</span><span class="nm">' + esc(p.name) + '</span>' +
         '<span class="pr">' + money(p.price) + '</span>' +
-        '<span class="st">' + st + '</span></button>';
+        '<span class="st">' + esc(st) + '</span></button>';
     }).join('') : '<div class="empty" style="grid-column:1/-1">No items match.</div>';
   }
 
@@ -140,6 +150,10 @@
   function add(id) {
     var p = byId(id);
     if (!p) return false;
+    if (isExpired(p)) {
+      A.toast('Expired item — cannot be sold.', true);
+      return false;
+    }
     var have = cartQty(id);
     if (have >= p.stock) {
       A.toast(isCashier ? 'Not enough stock available' : 'Only ' + p.stock + ' in stock', true);
@@ -208,10 +222,17 @@
         throw e;
       }
     }
-    cart = cart.filter(function (l) { return byId(l.id); }).map(function (l) {
+    var droppedExpired = false;
+    cart = cart.filter(function (l) {
+      var p = byId(l.id);
+      if (!p) return false;
+      if (isExpired(p)) { droppedExpired = true; return false; }
+      return true;
+    }).map(function (l) {
       var p = byId(l.id);
       return { id: l.id, qty: Math.min(l.qty, Math.max(0, p.stock)) };
     }).filter(function (l) { return l.qty > 0; });
+    if (droppedExpired) A.toast('Expired item removed from the cart.', true);
     paintBanner();
     renderCart();
     renderPending();
@@ -226,6 +247,7 @@
     if (!A.isOnline()) {
       var hit = products.filter(function (p) { return String(p.barcode).toLowerCase() === code.toLowerCase(); })[0];
       if (hit) {
+        if (isExpired(hit)) { say(expiredText(hit), false); beep(false); return; }
         if (add(hit.id)) { say('Added: ' + hit.name + ' (' + hit.barcode + ') · offline', true); beep(true); }
       } else {
         say('No cached item with barcode ' + code + ' (offline).', false);
@@ -243,7 +265,8 @@
     } catch (e) {
       if (netErr(e)) {
         var h = products.filter(function (x) { return String(x.barcode).toLowerCase() === code.toLowerCase(); })[0];
-        if (h && add(h.id)) { say('Added from cache: ' + h.name + ' (offline)', true); beep(true); }
+        if (h && isExpired(h)) { say(expiredText(h), false); beep(false); }
+        else if (h && add(h.id)) { say('Added from cache: ' + h.name + ' (offline)', true); beep(true); }
         else { say('Offline — barcode not in cached items.', false); beep(false); }
       } else {
         say(e.message, false);
@@ -270,6 +293,7 @@
     for (var i = 0; i < items.length; i++) {
       var p = byId(items[i].id);
       if (!p) { el.err.textContent = 'An item in the cart is no longer available.'; el.err.hidden = false; el.charge.disabled = false; return; }
+      if (isExpired(p)) { el.err.textContent = expiredText(p) + ' Remove it from the cart.'; el.err.hidden = false; el.charge.disabled = false; return; }
       if (items[i].qty > p.stock) { el.err.textContent = isCashier ? 'Not enough stock available for ' + p.name + '.' : 'Only ' + p.stock + ' of ' + p.name + ' in cached stock.'; el.err.hidden = false; el.charge.disabled = false; return; }
     }
     try {
@@ -302,6 +326,15 @@
 
   async function checkout() {
     if (!cart.length) return;
+    for (var ci = 0; ci < cart.length; ci++) {
+      var cp = byId(cart[ci].id);
+      if (cp && isExpired(cp)) {
+        el.err.textContent = expiredText(cp) + ' Remove it from the cart.';
+        el.err.hidden = false;
+        el.charge.disabled = false;
+        return;
+      }
+    }
     el.err.hidden = true;
     el.charge.disabled = true;
     var items = snapshot();

@@ -1,8 +1,8 @@
 /* Convenience Store POS service worker: offline-first app shell, network-only API. */
 'use strict';
 
-var CACHE = 'store-pos-v17';
-var RUNTIME = 'store-pos-rt-v17';
+var CACHE = 'store-pos-v20';
+var RUNTIME = 'store-pos-rt-v20';
 
 // Bump this list when shell files change.
 var PRECACHE = [
@@ -144,6 +144,25 @@ function cacheFirstStatic(request) {
   });
 }
 
+// Scripts and styles use network-first while online so a deployment takes
+// effect on the next load, not one reload later. The cached copy still covers
+// offline use.
+function networkFirstStatic(request) {
+  return fetch(request).then(function (res) {
+    if (res && res.ok) {
+      var copy = res.clone();
+      caches.open(RUNTIME).then(function (cache) {
+        cache.put(request, copy).catch(function () {});
+      }).catch(function () {});
+    }
+    return res;
+  }).catch(function () {
+    return caches.match(request, { ignoreSearch: false }).then(function (hit) {
+      return hit || new Response('', { status: 503, statusText: 'Offline' });
+    });
+  });
+}
+
 self.addEventListener('fetch', function (event) {
   var req = event.request;
   if (req.method !== 'GET') return; // never cache writes
@@ -160,7 +179,11 @@ self.addEventListener('fetch', function (event) {
     event.respondWith(networkFirstNavigation(req));
     return;
   }
-  if (req.destination === 'style' || req.destination === 'script' || req.destination === 'image' || req.destination === 'font' || url.pathname.indexOf('/icons/') === 0 || url.pathname === '/manifest.webmanifest' || url.pathname === '/sw.js') {
+  if (req.destination === 'style' || req.destination === 'script' || url.pathname === '/manifest.webmanifest' || url.pathname === '/sw.js') {
+    event.respondWith(networkFirstStatic(req));
+    return;
+  }
+  if (req.destination === 'image' || req.destination === 'font' || url.pathname.indexOf('/icons/') === 0) {
     event.respondWith(cacheFirstStatic(req));
   }
 });

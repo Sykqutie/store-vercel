@@ -50,7 +50,17 @@ const number = (v, { min = 0, max = 1e9, int = false } = {}) => {
 const cents = (n) => Math.round(n * 100);
 const money = (c) => (c / 100).toFixed(2);
 const likePattern = (s) => '%' + s.replace(/[\\%_]/g, '\\$&') + '%';
-const PRODUCT_COLS = `id, barcode, name, category, cost_price::float8 AS cost_price, price::float8 AS price, stock, low_stock_threshold`;
+// Date-only fields are kept as YYYY-MM-DD strings so the browser never has to
+// guess a time zone from an ISO timestamp.
+const dateOnly = (v) => {
+  if (v === null || v === undefined || v === '') return null;
+  const s = String(v).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return undefined;
+  const d = new Date(s + 'T00:00:00Z');
+  if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== s) return undefined;
+  return s;
+};
+const PRODUCT_COLS = `id, barcode, name, category, cost_price::float8 AS cost_price, price::float8 AS price, stock, low_stock_threshold, to_char(expiry_date, 'YYYY-MM-DD') AS expiry_date`;
 // Cashiers get POS only — no inventory management. Cost, thresholds and
 // margins are owner data, so they are stripped from every product/sale
 // payload a cashier can read. Stock stays (the POS needs it to block
@@ -114,6 +124,34 @@ function ensureAccountColumns() {
   return accountMigration;
 }
 ensureAccountColumns();
+
+// Expiration fields and persisted alert dismissals. Safe to run repeatedly and
+// retried after the installer creates the base tables on a fresh database.
+let alertSchemaMigration = null;
+function ensureAlertSchema() {
+  if (!alertSchemaMigration) {
+    alertSchemaMigration = (async () => {
+      try {
+        await db.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS expiry_date DATE');
+        await db.query('CREATE INDEX IF NOT EXISTS idx_products_expiry ON products (expiry_date)');
+        await db.query(`CREATE TABLE IF NOT EXISTS alert_dismissals (
+          user_id      INT          NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+          alert_key    VARCHAR(80)  NOT NULL,
+          dismissed_at TIMESTAMPTZ  NOT NULL DEFAULT now(),
+          PRIMARY KEY (user_id, alert_key)
+        )`);
+        await db.query('CREATE INDEX IF NOT EXISTS idx_alert_dismissals_user ON alert_dismissals (user_id)');
+        await db.query('ALTER TABLE alert_dismissals ENABLE ROW LEVEL SECURITY');
+      } catch (e) {
+        // Table may not exist yet (pre-install). Retry on the next request.
+        console.error('alert schema migration deferred:', e.message);
+        alertSchemaMigration = null;
+      }
+    })();
+  }
+  return alertSchemaMigration;
+}
+ensureAlertSchema();
 
 // Session + fresh account state (role / active) from the database.
 // Replaces the stateless requireAuth below so deactivation and role changes
@@ -200,6 +238,7 @@ api.post('/install', wrap(async (req, res) => {
   await db.exec(SCHEMA);
   await ensureOfflineColumns();
   await ensureAccountColumns();
+  await ensureAlertSchema();
   const { rows: [c] } = await db.query('SELECT COUNT(*)::int AS n FROM users');
   if (c.n > 0) return bad(res, 'Already installed. Sign in instead.', 403);
 
@@ -406,9 +445,112 @@ api.put('/users/:id', loadAccount, requireOwner, wrap(async (req, res) => {
 // Everything below needs a signed-in user with a live account.
 api.use(loadAccount);
 
+// ---------- unified inventory alerts ----------
+// One feed powers the dashboard panel and the header notification center.
+// Rules:
+//   out       stock <= 0                                  critical (never dismissible)
+//   low       0 < stock <= low_stock_threshold             warning  (dismissible)
+//   expired   stock > 0 and expiry_date < store today      critical (never dismissible)
+//   expiring  stock > 0 and 0..30 days left                buckets 30/14/7/1 days
+// Dismissals are persisted per user and pruned as soon as the alert resolves,
+// so a warning that comes back later is visible again. Product rows and stock
+// history are never touched by a dismissal.
+async function buildAlertData(userId) {
+  await ensureAlertSchema();
+  const tzName = tz();
+  const { rows } = await db.query(
+    `SELECT id, barcode, name, category, stock, low_stock_threshold,
+            to_char(expiry_date, 'YYYY-MM-DD') AS expiry_date,
+            CASE WHEN expiry_date IS NULL THEN NULL
+                 ELSE expiry_date - (now() AT TIME ZONE $1)::date END AS days_left
+     FROM products
+     WHERE stock <= low_stock_threshold
+        OR (stock > 0 AND expiry_date IS NOT NULL
+            AND expiry_date <= (now() AT TIME ZONE $1)::date + 30)
+     ORDER BY name ASC`,
+    [tzName]
+  );
+
+  const alerts = [];
+  for (const p of rows) {
+    const base = {
+      product_id: p.id,
+      id: p.id,
+      name: p.name,
+      barcode: p.barcode,
+      category: p.category,
+      stock: p.stock,
+      low_stock_threshold: p.low_stock_threshold,
+      expiry_date: p.expiry_date || null,
+      days_left: p.days_left == null ? null : p.days_left
+    };
+    if (p.stock <= 0) {
+      alerts.push({ ...base, key: `out:${p.id}`, type: 'out', severity: 'critical', status: 'OUT OF STOCK' });
+    } else if (p.stock <= p.low_stock_threshold) {
+      alerts.push({ ...base, key: `low:${p.id}`, type: 'low', severity: 'warning', status: 'LOW STOCK' });
+    }
+    if (p.stock > 0 && p.expiry_date && p.days_left != null) {
+      if (p.days_left < 0) {
+        alerts.push({ ...base, key: `expired:${p.id}:${p.expiry_date}`, type: 'expired', severity: 'critical', status: 'EXPIRED' });
+      } else if (p.days_left <= 30) {
+        const severity = p.days_left <= 1 ? 'critical'
+          : p.days_left <= 7 ? 'urgent'
+            : p.days_left <= 14 ? 'warning' : 'info';
+        alerts.push({ ...base, key: `expiring:${p.id}:${p.expiry_date}`, type: 'expiring', severity, status: 'EXPIRING SOON' });
+      }
+    }
+  }
+
+  let dismissed = new Set();
+  if (userId != null) {
+    const keys = alerts.map((a) => a.key);
+    if (keys.length) {
+      await db.query(
+        'DELETE FROM alert_dismissals WHERE user_id = $1 AND alert_key <> ALL($2::text[])',
+        [userId, keys]
+      );
+    } else {
+      await db.query('DELETE FROM alert_dismissals WHERE user_id = $1', [userId]);
+    }
+    const { rows: dRows } = await db.query('SELECT alert_key FROM alert_dismissals WHERE user_id = $1', [userId]);
+    dismissed = new Set(dRows.map((r) => r.alert_key));
+  }
+
+  const rank = { critical: 0, urgent: 1, warning: 2, info: 3 };
+  alerts.forEach((a) => {
+    a.dismissible = a.severity !== 'critical';
+    // A warning dismissed earlier must become visible again if it escalates to
+    // critical (e.g. an expiring item reaches its last day). The stale dismissal
+    // row is pruned once the alert resolves or its expiry date changes.
+    a.dismissed = a.dismissible && dismissed.has(a.key);
+  });
+  alerts.sort((a, b) =>
+    (rank[a.severity] - rank[b.severity]) ||
+    String(a.name).localeCompare(String(b.name)) ||
+    String(a.type).localeCompare(String(b.type))
+  );
+
+  const active = alerts.filter((a) => !a.dismissed);
+  const countType = (t) => active.filter((a) => a.type === t).length;
+  return {
+    generated_at: new Date().toISOString(),
+    timezone: tzName,
+    alerts,
+    counts: {
+      low: countType('low'),
+      out: countType('out'),
+      expiring: countType('expiring'),
+      expired: countType('expired'),
+      total: active.length,
+      critical: active.filter((a) => a.severity === 'critical').length,
+      dismissed: alerts.length - active.length
+    }
+  };
+}
+
 // ---------- dashboard (owner only) ----------
 api.get('/dashboard', loadAccount, requireOwner, wrap(async (req, res) => {
-  const [stats, chart, inv, low, lowCount, outCount, todayItems, recent, top, cats] = await Promise.all([
+  const [stats, chart, inv, low, lowCount, outCount, todayItems, recent, top, cats, alertData] = await Promise.all([
     periodStats(),
     chart7(),
     db.query(`SELECT COUNT(*)::int AS skus, COALESCE(SUM(stock),0)::int AS units, COALESCE(SUM(stock*price),0)::float8 AS value_amt FROM products`),
@@ -418,7 +560,8 @@ api.get('/dashboard', loadAccount, requireOwner, wrap(async (req, res) => {
     db.query(`SELECT COALESCE(SUM(si.quantity),0)::int AS items FROM sale_items si JOIN sales s ON s.id = si.sale_id WHERE (s.sale_date AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date`, [tz()]),
     db.query(`SELECT id, transaction_id, total_amount::float8 AS total_amount, profit::float8 AS profit, payment_method, sale_date FROM sales ORDER BY sale_date DESC LIMIT 8`),
     db.query(`SELECT product_name, SUM(quantity)::int AS qty, SUM(subtotal)::float8 AS amt FROM sale_items GROUP BY product_name ORDER BY qty DESC LIMIT 5`),
-    db.query(`SELECT category, SUM(stock)::int AS units FROM products GROUP BY category ORDER BY units DESC LIMIT 6`)
+    db.query(`SELECT category, SUM(stock)::int AS units FROM products GROUP BY category ORDER BY units DESC LIMIT 6`),
+    buildAlertData(req.user.uid)
   ]);
   res.json({
     stats,
@@ -431,45 +574,66 @@ api.get('/dashboard', loadAccount, requireOwner, wrap(async (req, res) => {
     recent: recent.rows,
     top: top.rows,
     categories: cats.rows,
+    alerts: alertData,
     user: req.user.username
   });
 }));
 
 // ---------- stock alerts (owner only) ----------
-// Lightweight low-stock / out-of-stock feed for the header notification bell.
-// Same rules as everywhere else: OUT = stock <= 0, LOW = 0 < stock <= threshold.
+// Unified feed used by the header notification bell dropdown.
+api.get('/alerts', loadAccount, requireOwner, wrap(async (req, res) => {
+  res.json(await buildAlertData(req.user.uid));
+}));
+
+// Dismiss a non-critical warning. Critical alerts (out of stock, expired, and
+// expiring today/tomorrow) stay visible until the inventory is fixed.
+api.post('/alerts/dismiss', loadAccount, requireOwner, wrap(async (req, res) => {
+  const key = text(req.body.key, 80);
+  if (!key) return bad(res, 'Choose an alert to dismiss.');
+  const data = await buildAlertData(req.user.uid);
+  const alert = data.alerts.find((a) => a.key === key);
+  if (!alert) return bad(res, 'That alert is no longer active.', 404);
+  if (!alert.dismissible) {
+    return bad(res, 'Critical alerts cannot be dismissed. Restock, remove, or update the item to clear it.');
+  }
+  await db.query(
+    'INSERT INTO alert_dismissals (user_id, alert_key) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+    [req.user.uid, key]
+  );
+  res.json(await buildAlertData(req.user.uid));
+}));
+
+// Restore a previously dismissed warning.
+api.post('/alerts/restore', loadAccount, requireOwner, wrap(async (req, res) => {
+  const key = text(req.body.key, 80);
+  if (!key) return bad(res, 'Choose an alert to restore.');
+  await db.query('DELETE FROM alert_dismissals WHERE user_id = $1 AND alert_key = $2', [req.user.uid, key]);
+  res.json(await buildAlertData(req.user.uid));
+}));
+
+// Backwards-compatible low-stock feed (used by older pages and smoke tests).
 api.get('/alerts/low-stock', loadAccount, requireOwner, wrap(async (req, res) => {
-  const LIMIT = 100; // dropdown-sized lists; counts always reflect the full totals
-  const [counts, out, low] = await Promise.all([
-    db.query(`SELECT COUNT(*) FILTER (WHERE stock <= 0)::int AS out_count,
-                     COUNT(*) FILTER (WHERE stock > 0 AND stock <= low_stock_threshold)::int AS low_count,
-                     COUNT(*) FILTER (WHERE stock <= low_stock_threshold)::int AS total
-              FROM products`),
-    db.query(`SELECT id, barcode, name, category, stock, low_stock_threshold
-              FROM products WHERE stock <= 0 ORDER BY name ASC LIMIT ${LIMIT}`),
-    db.query(`SELECT id, barcode, name, category, stock, low_stock_threshold
-              FROM products WHERE stock > 0 AND stock <= low_stock_threshold
-              ORDER BY stock ASC, name ASC LIMIT ${LIMIT}`)
-  ]);
-  const shape = (p, status) => ({
-    id: p.id,
-    barcode: p.barcode,
-    name: p.name,
-    category: p.category,
-    stock: p.stock,
-    low_stock_threshold: p.low_stock_threshold,
+  const data = await buildAlertData(req.user.uid);
+  const shape = (a, status) => ({
+    id: a.product_id,
+    barcode: a.barcode,
+    name: a.name,
+    category: a.category,
+    stock: a.stock,
+    low_stock_threshold: a.low_stock_threshold,
+    expiry_date: a.expiry_date,
+    days_left: a.days_left,
     status,
-    // No supplier columns exist in the schema; kept nullable so the UI can
-    // show them automatically if they are ever added.
-    supplier_name: p.supplier_name || null,
-    supplier_contact: p.supplier_contact || null
+    supplier_name: null,
+    supplier_contact: null
   });
-  const c = counts.rows[0];
+  const out = data.alerts.filter((a) => a.type === 'out' && !a.dismissed);
+  const low = data.alerts.filter((a) => a.type === 'low' && !a.dismissed);
   res.json({
-    counts: { out: c.out_count, low: c.low_count, total: c.total },
-    out_of_stock: out.rows.map((p) => shape(p, 'OUT OF STOCK')),
-    low_stock: low.rows.map((p) => shape(p, 'LOW STOCK')),
-    truncated: out.rows.length === LIMIT || low.rows.length === LIMIT
+    counts: { out: out.length, low: low.length, total: out.length + low.length },
+    out_of_stock: out.map((a) => shape(a, 'OUT OF STOCK')),
+    low_stock: low.map((a) => shape(a, 'LOW STOCK')),
+    truncated: false
   });
 }));
 
@@ -478,6 +642,7 @@ api.get('/alerts/low-stock', loadAccount, requireOwner, wrap(async (req, res) =>
 // Cost price and low-stock thresholds are stripped for cashiers (see
 // publicProduct) — POS-only, no inventory data.
 api.get('/products', wrap(async (req, res) => {
+  await ensureAlertSchema();
   const q = text(req.query.q, 100);
   const status = String(req.query.status || '');
   const where = [];
@@ -486,16 +651,26 @@ api.get('/products', wrap(async (req, res) => {
     params.push(likePattern(q));
     where.push(`(name ILIKE $${params.length} OR barcode ILIKE $${params.length} OR category ILIKE $${params.length})`);
   }
-  if (status === 'low') where.push('stock <= low_stock_threshold');
+  const expiryFilter = status === 'expiring' || status === 'expired';
+  if (expiryFilter) params.push(tz());
+  if (status === 'low') where.push('stock > 0 AND stock <= low_stock_threshold');
   if (status === 'out') where.push('stock <= 0');
+  if (status === 'expiring') {
+    where.push(`stock > 0 AND expiry_date IS NOT NULL AND expiry_date BETWEEN (now() AT TIME ZONE $${params.length})::date AND (now() AT TIME ZONE $${params.length})::date + 30`);
+  }
+  if (status === 'expired') {
+    where.push(`stock > 0 AND expiry_date IS NOT NULL AND expiry_date < (now() AT TIME ZONE $${params.length})::date`);
+  }
+  const order = expiryFilter ? 'expiry_date ASC, name ASC' : 'name ASC';
   const { rows } = await db.query(
-    `SELECT ${PRODUCT_COLS} FROM products ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY name ASC LIMIT 1000`,
+    `SELECT ${PRODUCT_COLS} FROM products ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY ${order} LIMIT 1000`,
     params
   );
   res.json({ products: rows.map((p) => publicProduct(req, p)) });
 }));
 
 api.get('/products/:id', wrap(async (req, res) => {
+  await ensureAlertSchema();
   const id = number(req.params.id, { min: 1, int: true });
   if (!id) return bad(res, 'Product not found.', 404);
   const { rows: [p] } = await db.query(`SELECT ${PRODUCT_COLS} FROM products WHERE id = $1`, [id]);
@@ -505,6 +680,7 @@ api.get('/products/:id', wrap(async (req, res) => {
 
 // Add a product, or restock an existing barcode (owner only; stock is added to what is on hand).
 api.post('/products', loadAccount, requireOwner, wrap(async (req, res) => {
+  await ensureAlertSchema();
   const b = req.body;
   const barcode = text(b.barcode, 64);
   const name = text(b.name, 150);
@@ -513,18 +689,21 @@ api.post('/products', loadAccount, requireOwner, wrap(async (req, res) => {
   const price = number(b.price, { max: 1e7 });
   const stock = number(b.stock, { max: 1e6, int: true });
   const threshold = number(b.low_stock_threshold, { max: 1e6, int: true });
+  const expiry = b.expiry_date === undefined ? null : dateOnly(b.expiry_date);
   if (!barcode || !name) return bad(res, 'Barcode and item name are required.');
   if (cost === null || price === null) return bad(res, 'Enter valid cost and selling prices.');
   if (stock === null || threshold === null) return bad(res, 'Stock and threshold must be whole numbers, 0 or more.');
+  if (expiry === undefined) return bad(res, 'Expiration date must be a valid date (YYYY-MM-DD).');
 
   const { rows: [r] } = await db.query(
-    `INSERT INTO products (barcode, name, category, cost_price, price, stock, low_stock_threshold)
-     VALUES ($1,$2,$3,$4,$5,$6,$7)
+    `INSERT INTO products (barcode, name, category, cost_price, price, stock, low_stock_threshold, expiry_date)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
      ON CONFLICT (barcode) DO UPDATE SET
        name = EXCLUDED.name, category = EXCLUDED.category, cost_price = EXCLUDED.cost_price, price = EXCLUDED.price,
-       stock = products.stock + EXCLUDED.stock, low_stock_threshold = EXCLUDED.low_stock_threshold, updated_at = now()
+       stock = products.stock + EXCLUDED.stock, low_stock_threshold = EXCLUDED.low_stock_threshold,
+       expiry_date = COALESCE(EXCLUDED.expiry_date, products.expiry_date), updated_at = now()
      RETURNING id, (xmax = 0) AS inserted`,
-    [barcode, name, category, cost, price, stock, threshold]
+    [barcode, name, category, cost, price, stock, threshold, expiry]
   );
   if (stock !== 0) {
     await db.query(
@@ -536,6 +715,7 @@ api.post('/products', loadAccount, requireOwner, wrap(async (req, res) => {
 }));
 
 api.put('/products/:id', loadAccount, requireOwner, wrap(async (req, res) => {
+  await ensureAlertSchema();
   const id = number(req.params.id, { min: 1, int: true });
   const b = req.body;
   const name = text(b.name, 150);
@@ -544,6 +724,11 @@ api.put('/products/:id', loadAccount, requireOwner, wrap(async (req, res) => {
   const cost = b.cost_price === undefined ? undefined : number(b.cost_price, { max: 1e7 });
   const stock = number(b.stock, { max: 1e6, int: true });
   const threshold = number(b.low_stock_threshold, { max: 1e6, int: true });
+  let expiry;
+  if (b.expiry_date !== undefined) {
+    expiry = dateOnly(b.expiry_date);
+    if (expiry === undefined) return bad(res, 'Expiration date must be a valid date (YYYY-MM-DD).');
+  }
   // Optional conflict guard for offline-queued edits: the stock the editor saw.
   const baseStock = (b.base_stock === undefined || b.base_stock === null || b.base_stock === '') ? undefined : number(b.base_stock, { max: 1e6, int: true });
   if (!id) return bad(res, 'Product not found.', 404);
@@ -556,14 +741,21 @@ api.put('/products/:id', loadAccount, requireOwner, wrap(async (req, res) => {
   }
 
   const found = await db.tx(async (c) => {
-    const { rows: [old] } = await c.query('SELECT stock, cost_price::float8 AS cost_price, category FROM products WHERE id = $1 FOR UPDATE', [id]);
+    const { rows: [old] } = await c.query(
+      `SELECT stock, cost_price::float8 AS cost_price, category,
+              to_char(expiry_date, 'YYYY-MM-DD') AS expiry_date
+       FROM products WHERE id = $1 FOR UPDATE`,
+      [id]
+    );
     if (!old) return false;
     if (baseStock !== undefined && old.stock !== baseStock) {
       return { conflict: true, current_stock: old.stock };
     }
     await c.query(
-      `UPDATE products SET name=$1, price=$2, stock=$3, low_stock_threshold=$4, cost_price=$5, category=$6, updated_at=now() WHERE id=$7`,
-      [name, price, stock, threshold, cost === undefined ? old.cost_price : cost, category || old.category, id]
+      `UPDATE products SET name=$1, price=$2, stock=$3, low_stock_threshold=$4, cost_price=$5, category=$6,
+              expiry_date=$7, updated_at=now() WHERE id=$8`,
+      [name, price, stock, threshold, cost === undefined ? old.cost_price : cost, category || old.category,
+        expiry === undefined ? old.expiry_date : expiry, id]
     );
     if (stock !== old.stock) {
       await c.query(
@@ -596,10 +788,17 @@ api.delete('/products/:id', loadAccount, requireOwner, wrap(async (req, res) => 
 // Barcode lookup used by the POS scanner box (POS-only for cashiers;
 // cost and thresholds are stripped — see publicProduct).
 api.get('/lookup', wrap(async (req, res) => {
+  await ensureAlertSchema();
   const code = text(req.query.code, 64);
   if (!code) return bad(res, 'Enter a barcode.');
-  const { rows: [p] } = await db.query(`SELECT ${PRODUCT_COLS} FROM products WHERE barcode = $1`, [code]);
+  const { rows: [p] } = await db.query(
+    `SELECT ${PRODUCT_COLS},
+            (expiry_date IS NOT NULL AND expiry_date < (now() AT TIME ZONE $2)::date) AS expired
+     FROM products WHERE barcode = $1`,
+    [code, tz()]
+  );
   if (!p) return bad(res, 'No product with barcode ' + code + '.', 404);
+  if (p.expired) return bad(res, p.name + ' expired on ' + p.expiry_date + ' and cannot be sold.', 409);
   if (p.stock <= 0) return bad(res, p.name + ' is out of stock.', 409);
   res.json({ product: publicProduct(req, p) });
 }));
@@ -609,6 +808,7 @@ api.get('/lookup', wrap(async (req, res) => {
 // Accepts an optional client_sale_id (offline idempotency key): retried
 // syncs with the same key return the original sale instead of duplicating it.
 api.post('/checkout', wrap(async (req, res) => {
+  await ensureAlertSchema();
   const b = req.body;
   const raw = Array.isArray(b.items) ? b.items : [];
   if (!raw.length || raw.length > 100) return bad(res, 'The cart is empty.');
@@ -641,8 +841,11 @@ api.post('/checkout', wrap(async (req, res) => {
     result = await db.tx(async (c) => {
       const ids = [...qtyById.keys()];
       const { rows } = await c.query(
-        'SELECT id, name, price::float8 AS price, cost_price::float8 AS cost, stock FROM products WHERE id = ANY($1::int[]) ORDER BY id FOR UPDATE',
-        [ids]
+        `SELECT id, name, price::float8 AS price, cost_price::float8 AS cost, stock,
+                to_char(expiry_date, 'YYYY-MM-DD') AS expiry_date,
+                (expiry_date IS NOT NULL AND expiry_date < (now() AT TIME ZONE $2)::date) AS expired
+         FROM products WHERE id = ANY($1::int[]) ORDER BY id FOR UPDATE`,
+        [ids, tz()]
       );
       if (rows.length !== ids.length) return { error: 'An item in the cart no longer exists.' };
 
@@ -650,6 +853,7 @@ api.post('/checkout', wrap(async (req, res) => {
       let cost = 0;
       for (const p of rows) {
         const qty = qtyById.get(p.id);
+        if (p.expired) return { error: `${p.name} expired on ${p.expiry_date} and cannot be sold.` };
         if (p.stock < qty) return { error: `Only ${p.stock} of ${p.name} left in stock.` };
         sub += cents(p.price) * qty;
         cost += cents(p.cost) * qty;

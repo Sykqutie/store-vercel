@@ -8,7 +8,7 @@
   var main = await A.mountShell('products', 'owner');
   if (!main) return;
 
-  var status = A.qs('status') === 'low' ? 'low' : A.qs('status') === 'out' ? 'out' : '';
+  var status = ['low', 'out', 'expiring', 'expired'].indexOf(A.qs('status')) >= 0 ? A.qs('status') : '';
   var timer;
   var all = [];
   var offlineMode = !A.isOnline();
@@ -26,7 +26,8 @@
     '<label for="price">Selling price (₱)<input id="price" type="number" step="0.01" min="0" required></label></div>' +
     '<div class="row2"><label for="stock">Quantity to add<input id="stock" type="number" step="1" min="0" required></label>' +
     '<label for="threshold">Low stock alert at<input id="threshold" type="number" step="1" min="0" value="5" required></label></div>' +
-    '<div class="note">Saving an existing barcode adds the quantity to its stock and updates the details.</div>' +
+    '<label for="expiry">Expiry date (optional)<input id="expiry" type="date"></label>' +
+    '<div class="note">Saving an existing barcode adds the quantity to its stock and updates the details. Leave expiry blank for items without a printed date.</div>' +
     '<div class="alert" id="err" hidden></div>' +
     '<button class="btn primary wide" id="save" type="submit">Save inventory item</button></form>' +
     '<div class="panel pad" id="queuePanel" style="margin-top:14px"><div class="ph"><h2>Queued inventory changes</h2><span class="mono mute" id="queueMeta"></span></div>' +
@@ -35,7 +36,7 @@
     '<div class="panel pad"><div class="ph"><h2>Inventory</h2><span class="inv-meta"><span class="mono mute" id="count"></span><span class="mono lk-total" id="invValue" aria-live="polite"></span></span></div>' +
     '<div class="toolbar"><input id="q" type="search" placeholder="Search name, barcode or category" aria-label="Search inventory">' +
     '<div class="chips" id="chips"></div></div>' +
-    '<div class="tw"><table id="invTable"><thead><tr><th>Barcode (scan)</th><th class="sortable" data-sort="name" role="columnheader">Name <span class="sort-ind" data-ind="name"></span></th><th class="n">Cost</th><th class="n sortable" data-sort="price" role="columnheader">Price <span class="sort-ind" data-ind="price"></span></th><th class="sortable" data-sort="stock" role="columnheader">Stock <span class="sort-ind" data-ind="stock"></span></th><th>Status</th><th></th></tr></thead><tbody id="body"></tbody></table></div>' +
+    '<div class="tw"><table id="invTable"><thead><tr><th>Barcode (scan)</th><th class="sortable" data-sort="name" role="columnheader">Name <span class="sort-ind" data-ind="name"></span></th><th class="n">Cost</th><th class="n sortable" data-sort="price" role="columnheader">Price <span class="sort-ind" data-ind="price"></span></th><th class="sortable" data-sort="stock" role="columnheader">Stock <span class="sort-ind" data-ind="stock"></span></th><th class="sortable" data-sort="expiry_date" role="columnheader">Expiry <span class="sort-ind" data-ind="expiry_date"></span></th><th>Status</th><th></th></tr></thead><tbody id="body"></tbody></table></div>' +
     '</div></div>';
 
   var body = A.$('#body'), err = A.$('#err');
@@ -55,7 +56,7 @@
   }
 
   function chips() {
-    A.$('#chips').innerHTML = [['', 'All'], ['low', 'Low stock'], ['out', 'Out of stock']].map(function (c) {
+    A.$('#chips').innerHTML = [['', 'All'], ['low', 'Low stock'], ['out', 'Out of stock'], ['expiring', 'Expiring ≤30 days'], ['expired', 'Expired']].map(function (c) {
       return '<button class="chip" type="button" data-s="' + c[0] + '" aria-pressed="' + (status === c[0]) + '">' + c[1] + '</button>';
     }).join('');
   }
@@ -105,17 +106,26 @@
     return s;
   }
 
+  function expiryDays(p) {
+    return p.expiry_date ? A.daysUntil(p.expiry_date) : null;
+  }
+
   function filtered() {
     var q = A.$('#q').value.trim().toLowerCase();
     var list = all.filter(function (p) {
-      if (status === 'low' && !(p.stock <= p.low_stock_threshold)) return false;
+      var days = expiryDays(p);
+      if (status === 'low' && !(p.stock > 0 && p.stock <= p.low_stock_threshold)) return false;
       if (status === 'out' && !(p.stock <= 0)) return false;
+      if (status === 'expiring' && !(p.stock > 0 && days != null && days >= 0 && days <= 30)) return false;
+      if (status === 'expired' && !(p.stock > 0 && days != null && days < 0)) return false;
       if (q && String(p.name).toLowerCase().indexOf(q) < 0 && String(p.barcode).toLowerCase().indexOf(q) < 0 && String(p.category).toLowerCase().indexOf(q) < 0) return false;
       return true;
     });
     var dir = sortDir;
     list.sort(function (a, b) {
       var x = a[sortKey], y = b[sortKey];
+      if (x == null) x = '';
+      if (y == null) y = '';
       if (typeof x === 'string') x = x.toLowerCase();
       if (typeof y === 'string') y = y.toLowerCase();
       if (x < y) return -dir;
@@ -134,6 +144,38 @@
     el.title = 'Total retail value of listed items in Philippine pesos';
   }
 
+  function daysLabel(days) {
+    if (days == null) return '';
+    if (days < 0) return Math.abs(days) + 'd overdue';
+    if (days === 0) return 'expires today';
+    if (days === 1) return 'expires tomorrow';
+    return days + 'd left';
+  }
+
+  function expiryCell(p) {
+    if (!p.expiry_date) return '<span class="mute">—</span>';
+    var days = expiryDays(p);
+    var cls = days != null && days < 0 ? 'down' : days != null && days <= 7 ? 'warn' : days != null && days <= 30 ? '' : 'mute';
+    return '<span class="mono ' + cls + '">' + esc(A.fmtDate(p.expiry_date)) + '</span><span class="sub ' + cls + '">' + esc(daysLabel(days)) + '</span>';
+  }
+
+  function statusPills(p) {
+    var days = expiryDays(p);
+    var out = [];
+    if (p.stock <= 0) {
+      out.push('<span class="pill out">Out</span>');
+    } else {
+      if (days != null && days < 0) out.push('<span class="pill out">Expired</span>');
+      if (p.stock <= p.low_stock_threshold) out.push('<span class="pill low">Low · ' + p.stock + '</span>');
+      if (days != null && days >= 0 && days <= 30) {
+        out.push('<span class="pill ' + (days <= 7 ? 'urgent' : 'expiring') + '">' +
+          (days <= 1 ? 'Expires now' : days <= 7 ? 'Expiring urgent' : 'Expiring') + '</span>');
+      }
+      if (!out.length) out.push('<span class="pill ok">' + p.stock + '</span>');
+    }
+    return out.join(' ');
+  }
+
   function render() {
     var list = filtered();
     A.$('#count').textContent = list.length + ' items' + (offlineMode ? ' (cached)' : '');
@@ -143,19 +185,19 @@
     });
     A.$('#body')._products = list;
     body.innerHTML = list.length ? list.map(function (p) {
-      var low = p.stock <= p.low_stock_threshold;
-      var badge = p.stock <= 0 ? '<span class="pill out">Out of stock</span>'
-        : low ? '<span class="pill low">Low · ' + p.stock + '</span>'
-        : '<span class="pill ok">' + p.stock + '</span>';
-      return '<tr class="' + (low ? 'row-low' : '') + '"><td><span class="bc"><svg class="jsbarcode" data-code="' + esc(p.barcode) + '" role="img" aria-label="Barcode ' + esc(p.barcode) + '"></svg></span>' +
+      var days = expiryDays(p);
+      var low = p.stock > 0 && p.stock <= p.low_stock_threshold;
+      var warnRow = p.stock <= 0 || low || (days != null && days <= 7);
+      return '<tr class="' + (warnRow ? 'row-low' : '') + '"><td><span class="bc"><svg class="jsbarcode" data-code="' + esc(p.barcode) + '" role="img" aria-label="Barcode ' + esc(p.barcode) + '"></svg></span>' +
         '<span class="mono mute" style="font-size:11px">' + esc(p.barcode) + '</span></td>' +
         '<td><b>' + esc(p.name) + '</b><span class="sub">' + esc(p.category) + '</span></td>' +
         '<td class="n mono mute">' + money(p.cost_price) + '</td><td class="n mono">' + money(p.price) + '</td>' +
-        '<td class="mono"><b>' + p.stock + '</b></td><td>' + badge + '</td>' +
+        '<td class="mono"><b>' + p.stock + '</b></td><td>' + expiryCell(p) + '</td>' +
+        '<td>' + statusPills(p) + '</td>' +
         '<td><div class="acts">' +
         '<a class="btn sm" href="/edit-product?id=' + p.id + '">Edit</a><button class="btn sm" type="button" data-label="' + p.id + '">Label</button><button class="btn sm danger" type="button" data-del="' + p.id + '" aria-label="Delete ' + esc(p.name) + '">Delete</button>' +
         '</div></td></tr>';
-    }).join('') : '<tr><td colspan="7" class="empty">No inventory items found' + (offlineMode ? ' in cache' : '') + '.</td></tr>';
+    }).join('') : '<tr><td colspan="8" class="empty">No inventory items found' + (offlineMode ? ' in cache' : '') + '.</td></tr>';
     paintBarcodes();
   }
 
@@ -171,7 +213,8 @@
         var pill = r.status === 'failed' ? '<span class="pill out">Failed</span>' : '<span class="pill low">Pending</span>';
         var desc = r.type === 'adjust'
           ? 'Set stock to <b>' + r.stock + '</b> · ' + esc(r.name)
-          : 'Add <b>+' + r.stock + '</b> · ' + esc(r.name) + ' (' + esc(r.barcode) + ')';
+          : 'Add <b>+' + r.stock + '</b> · ' + esc(r.name) + ' (' + esc(r.barcode) + ')' +
+            (r.expiry_date ? ' · expires ' + esc(A.fmtDate(r.expiry_date)) : '');
         var e = r.last_error ? '<div class="mono down" style="font-size:12px">' + esc(r.last_error) + '</div>' : '';
         return '<div class="pend"><div>' + pill + ' <span>' + desc + '</span></div>' + e +
           '<div class="acts">' +
@@ -210,12 +253,14 @@
       type: 'restock',
       barcode: fields.barcode, name: fields.name, category: fields.category,
       cost_price: fields.cost_price, price: fields.price,
-      stock: fields.stock, low_stock_threshold: fields.threshold
+      stock: fields.stock, low_stock_threshold: fields.threshold,
+      expiry_date: fields.expiry_date || null
     });
     // Optimistic local update for existing barcodes (prevents oversell display).
     var hit = all.filter(function (p) { return String(p.barcode) === String(fields.barcode); })[0];
     if (hit && window.LocalDB) {
       hit.stock = Number(hit.stock || 0) + Number(fields.stock || 0);
+      if (fields.expiry_date) hit.expiry_date = fields.expiry_date;
       try { await window.LocalDB.put('products', hit); } catch (e) { /* ignore */ }
       render();
     }
@@ -302,11 +347,12 @@
     var fields = {
       barcode: A.$('#barcode').value, name: A.$('#name').value, category: A.$('#category').value,
       cost_price: A.$('#cost').value, price: A.$('#price').value,
-      stock: A.$('#stock').value, threshold: A.$('#threshold').value
+      stock: A.$('#stock').value, threshold: A.$('#threshold').value,
+      expiry_date: A.$('#expiry').value
     };
     try {
       if (!A.isOnline()) {
-        await queueOfflineOp({ barcode: fields.barcode, name: fields.name, category: fields.category, cost_price: fields.cost_price, price: fields.price, stock: Number(fields.stock || 0), low_stock_threshold: Number(fields.threshold || 5) });
+        await queueOfflineOp({ barcode: fields.barcode, name: fields.name, category: fields.category, cost_price: fields.cost_price, price: fields.price, stock: Number(fields.stock || 0), low_stock_threshold: Number(fields.threshold || 5), expiry_date: fields.expiry_date || null });
         A.toast('Saved offline — will sync when online.');
         A.$('#f').reset();
         A.$('#category').value = 'General';
@@ -318,7 +364,8 @@
             body: {
               barcode: fields.barcode, name: fields.name, category: fields.category,
               cost_price: fields.cost_price, price: fields.price,
-              stock: fields.stock, low_stock_threshold: fields.threshold
+              stock: fields.stock, low_stock_threshold: fields.threshold,
+              expiry_date: fields.expiry_date || null
             }
           });
           A.toast(r.created ? 'Inventory item added' : 'Inventory item restocked');
@@ -329,7 +376,7 @@
           if (window.StockAlerts) { try { window.StockAlerts.notifyChanged(); } catch (x) {} }
         } catch (ex) {
           if (netErr(ex)) {
-            await queueOfflineOp({ barcode: fields.barcode, name: fields.name, category: fields.category, cost_price: fields.cost_price, price: fields.price, stock: Number(fields.stock || 0), low_stock_threshold: Number(fields.threshold || 5) });
+            await queueOfflineOp({ barcode: fields.barcode, name: fields.name, category: fields.category, cost_price: fields.cost_price, price: fields.price, stock: Number(fields.stock || 0), low_stock_threshold: Number(fields.threshold || 5), expiry_date: fields.expiry_date || null });
             A.toast('Connection lost — queued for sync.', true);
             A.$('#f').reset();
             A.$('#category').value = 'General';

@@ -1,4 +1,5 @@
-/* Dashboard (replaces dashboard.php): KPIs, 7-day revenue vs profit, stock by category, alerts, recent sales. */
+/* Dashboard (replaces dashboard.php): KPIs, 7-day revenue vs profit, stock by category, recent sales.
+   Inventory alerts live only in the header notification bell. */
 (async function () {
   'use strict';
   var A = App, esc = A.esc, money = A.money;
@@ -27,7 +28,8 @@
 
   // Offline: render the last cached inventory + the outbox queue instead of
   // a dead-end error. Revenue / profit / recent sales are server-only, but
-  // stock levels, low-stock alerts and queued sales are all available locally.
+  // stock levels and queued sales are available locally. Alerts remain in the
+  // header bell only.
   async function renderOfflineDashboard() {
     var products = [], sales = [], invQueue = [];
     var cachedAt = null, lastSyncAt = null;
@@ -55,17 +57,12 @@
       var cat = String(p.category || 'General');
       cats[cat] = (cats[cat] || 0) + st;
     });
-    // LOW = 0 < stock <= threshold (matches the server rule in /api/alerts/low-stock).
+    // LOW = 0 < stock <= threshold (matches the server alert rule).
     var lowCount = products.filter(function (p) {
       var st = Number(p.stock || 0);
       var th = (p.low_stock_threshold == null ? 5 : Number(p.low_stock_threshold));
       return st > 0 && st <= th;
     }).length;
-    var lowList = products.filter(function (p) {
-      var st = Number(p.stock || 0);
-      var th = (p.low_stock_threshold == null ? 5 : Number(p.low_stock_threshold));
-      return st <= th;
-    }).sort(function (a, b) { return Number(a.stock || 0) - Number(b.stock || 0); }).slice(0, 8);
 
     var queuedRevenueCents = 0, queuedItems = 0;
     sales.forEach(function (s) {
@@ -104,14 +101,6 @@
       { lb: 'Queued inventory', v: invQueue.length, f: int, d: invQueue.length ? 'Restocks waiting to sync' : 'Nothing queued', ic: 'c-teal', svg: IC.items }
     ];
 
-    var lowHtml = lowList.length
-      ? lowList.map(function (p) {
-          return '<tr><td><b>' + esc(p.name) + '</b><span class="sub">' + esc(p.barcode) + ' · ' + esc(p.category || 'General') + ' · cached</span></td>' +
-            '<td class="mono">' + Number(p.stock || 0) + '</td>' +
-            '<td>' + (Number(p.stock || 0) <= 0 ? '<span class="pill out">Out</span>' : '<span class="pill low">Low</span>') + '</td></tr>';
-        }).join('')
-      : '<tr><td colspan="3" class="empty">All cached stocks healthy</td></tr>';
-
     var queueHtml = sales.length
       ? sales.slice(0, 10).map(function (s) {
           var tot = 0;
@@ -144,13 +133,11 @@
         return '<div class="panel kpi ic"><span class="kico ' + k.ic + '" aria-hidden="true">' + k.svg + '</span>' +
           '<div class="kv"><span class="lb">' + k.lb + '</span><span class="v sm" id="okv' + i + '">0</span><span class="d">' + k.d + '</span></div></div>';
       }).join('') + '</div>' +
-      '<div class="grid2"><div class="panel pad"><div class="ph"><h2>Low stock alerts · cached</h2><a class="btn sm" href="/inventory?status=low">Restock</a></div>' +
-      '<div class="tw"><table><thead><tr><th>Item</th><th>Stock</th><th>Status</th></tr></thead><tbody>' + lowHtml + '</tbody></table></div></div>' +
-      '<div class="panel pad"><div class="ph"><h2>Queued sales · not yet in totals</h2><a class="btn sm" href="/report">Review</a></div>' +
+      '<div class="grid2"><div class="panel pad"><div class="ph"><h2>Queued sales · not yet in totals</h2><a class="btn sm" href="/report">Review</a></div>' +
       '<div class="tw"><table><thead><tr><th>Queue</th><th>Total</th><th>Status</th><th>Time</th><th></th></tr></thead><tbody>' + queueHtml + '</tbody></table></div>' +
       (invQueue.length ? '<p style="margin-top:10px" class="mono mute">' + invQueue.length + ' inventory change(s) also queued — they sync from Inventory.</p>' : '') +
-      '<p style="margin-top:10px" class="mono mute">Server revenue, profit and recent transactions return when you reconnect.</p></div></div>' +
-      '<div class="panel pad"><div class="ph"><h2>Stock by category · cached</h2></div><div class="list">' + catHtml + '</div></div>';
+      '<p style="margin-top:10px" class="mono mute">Server revenue, profit and recent transactions return when you reconnect.</p></div>' +
+      '<div class="panel pad"><div class="ph"><h2>Stock by category · cached</h2></div><div class="list">' + catHtml + '</div></div></div>';
 
     kpis.forEach(function (k, i) { A.countTo(A.$('#okv' + i), k.v, k.f); });
     A.reveal(main);
@@ -201,14 +188,6 @@
       }).join('')
     : '<div class="empty">No sales yet. Run your first transaction in POS.</div>';
 
-  var lowHtml = d.low.length
-    ? d.low.map(function (p) {
-        return '<tr><td><b>' + esc(p.name) + '</b><span class="sub">' + esc(p.barcode) + ' · ' + esc(p.category) + '</span></td>' +
-          '<td class="mono">' + p.stock + '</td>' +
-          '<td>' + (p.stock <= 0 ? '<span class="pill out">Out</span>' : '<span class="pill low">Low</span>') + '</td></tr>';
-      }).join('')
-    : '<tr><td colspan="3" class="empty">All stocks healthy</td></tr>';
-
   var recentHtml = d.recent.length
     ? d.recent.map(function (r) {
         return '<tr><td class="mono">' + esc(r.transaction_id) + '</td><td class="mono"><b>' + money(r.total_amount) + '</b></td>' +
@@ -228,10 +207,8 @@
     '<div class="grid2"><div class="panel pad"><div class="ph"><h2>Revenue vs profit · last 7 days</h2></div><div class="chart-box"><canvas id="dashChart" role="img" aria-label="Revenue and profit for the last 7 days"></canvas></div></div>' +
     '<div class="panel pad"><div class="ph"><h2>Stock by category</h2></div><div class="chart-box" style="height:200px"><canvas id="catChart" role="img" aria-label="Units in stock by category"></canvas></div>' +
     '<div class="ph" style="margin-top:16px"><h2>Top sellers</h2></div><div class="list">' + topHtml + '</div></div></div>' +
-    '<div class="grid2 b"><div class="panel pad"><div class="ph"><h2>Low stock alerts</h2><a class="btn sm" href="/inventory?status=low">Restock</a></div>' +
-    '<div class="tw"><table><thead><tr><th>Item</th><th>Stock</th><th>Status</th></tr></thead><tbody>' + lowHtml + '</tbody></table></div></div>' +
     '<div class="panel pad"><div class="ph"><h2>Recent transactions</h2><a class="btn sm" href="/report">View all</a></div>' +
-    '<div class="tw"><table><thead><tr><th>Txn</th><th>Total</th><th>Pay</th><th>Time</th><th></th></tr></thead><tbody>' + recentHtml + '</tbody></table></div></div></div>';
+    '<div class="tw"><table><thead><tr><th>Txn</th><th>Total</th><th>Pay</th><th>Time</th><th></th></tr></thead><tbody>' + recentHtml + '</tbody></table></div></div>';
 
   kpis.forEach(function (k, i) { A.countTo(A.$('#kv' + i), k.v, k.f); });
   A.reveal(main);

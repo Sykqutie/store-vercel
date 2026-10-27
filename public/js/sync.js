@@ -118,6 +118,9 @@
         attempts: 0,
         last_error: null
       };
+      // Keep undefined distinct from blank: old queued records must not clear
+      // an expiry date that was already stored on the server.
+      if (op.expiry_date !== undefined) rec.expiry_date = op.expiry_date || null;
       if (!rec.barcode && !rec.product_id) throw new Error('Barcode is required for queued inventory changes.');
       return window.LocalDB.put('inventory_queue', rec).then(function () {
         emit();
@@ -222,6 +225,7 @@
           name: rec.name, category: rec.category, cost_price: rec.cost_price,
           price: rec.price, stock: rec.stock, low_stock_threshold: rec.low_stock_threshold
         };
+        if (rec.expiry_date !== undefined) body.expiry_date = rec.expiry_date;
         if (rec.base_stock != null) body.base_stock = rec.base_stock;
         p = window.App.api('/products/' + rec.product_id, { method: 'PUT', body: body, noRedirect: true });
       } else {
@@ -229,7 +233,8 @@
           body: {
             barcode: rec.barcode, name: rec.name, category: rec.category,
             cost_price: rec.cost_price, price: rec.price,
-            stock: rec.stock, low_stock_threshold: rec.low_stock_threshold
+            stock: rec.stock, low_stock_threshold: rec.low_stock_threshold,
+            expiry_date: rec.expiry_date === undefined ? null : rec.expiry_date
           },
           noRedirect: true
         });

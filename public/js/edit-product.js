@@ -36,6 +36,8 @@
     '<label for="price">Price (₱)<input id="price" type="number" step="0.01" min="0" required value="' + p.price + '"></label></div>' +
     '<div class="row2"><label for="stock">Stock quantity<input id="stock" type="number" step="1" min="0" required value="' + p.stock + '"></label>' +
     '<label for="threshold">Low stock threshold<input id="threshold" type="number" step="1" min="0" required value="' + p.low_stock_threshold + '"></label></div>' +
+    '<label for="expiry">Expiry date (optional)<input id="expiry" type="date" value="' + esc(p.expiry_date || '') + '"></label>' +
+    '<div class="note">Leave blank to remove the expiry date. Expired stock is blocked at POS and highlighted in Inventory.</div>' +
     '<div class="alert" id="err" hidden></div>' +
     '<button class="btn primary wide" id="save" type="submit">Update inventory item</button>' +
     '<a class="btn wide" href="/inventory" style="text-align:center">Cancel</a></form></div>';
@@ -69,7 +71,8 @@
     btn.disabled = true;
     var fields = {
       name: A.$('#name').value, category: A.$('#category').value, cost_price: A.$('#cost').value,
-      price: A.$('#price').value, stock: A.$('#stock').value, low_stock_threshold: A.$('#threshold').value
+      price: A.$('#price').value, stock: A.$('#stock').value, low_stock_threshold: A.$('#threshold').value,
+      expiry_date: A.$('#expiry').value || null
     };
     // Offline (or lost connection): queue an adjust op with base_stock for conflict safety.
     if (!A.isOnline()) {
@@ -79,7 +82,7 @@
           type: 'adjust', product_id: id, barcode: p.barcode,
           name: fields.name, category: fields.category, cost_price: fields.cost_price,
           price: fields.price, stock: Number(fields.stock), low_stock_threshold: Number(fields.low_stock_threshold),
-          base_stock: p.stock
+          expiry_date: fields.expiry_date, base_stock: p.stock
         });
         A.toast('Saved offline — will sync when online.');
         location.href = '/inventory';
@@ -105,7 +108,7 @@
             type: 'adjust', product_id: id, barcode: p.barcode,
             name: fields.name, category: fields.category, cost_price: fields.cost_price,
             price: fields.price, stock: Number(fields.stock), low_stock_threshold: Number(fields.low_stock_threshold),
-            base_stock: p.stock
+            expiry_date: fields.expiry_date, base_stock: p.stock
           });
           A.toast('Connection lost — change queued for sync.', true);
           location.href = '/inventory';

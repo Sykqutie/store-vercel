@@ -22,12 +22,26 @@ CREATE TABLE IF NOT EXISTS products (
   price                NUMERIC(10,2) NOT NULL DEFAULT 0,
   stock                INT           NOT NULL DEFAULT 0 CHECK (stock >= 0),
   low_stock_threshold  INT           NOT NULL DEFAULT 5,
+  expiry_date          DATE,
   created_at           TIMESTAMPTZ   NOT NULL DEFAULT now(),
   updated_at           TIMESTAMPTZ   NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_products_name     ON products (name);
 CREATE INDEX IF NOT EXISTS idx_products_category ON products (category);
 CREATE INDEX IF NOT EXISTS idx_products_stock    ON products (stock);
+CREATE INDEX IF NOT EXISTS idx_products_expiry   ON products (expiry_date);
+
+-- Per-user dismissals for non-critical notifications. The underlying product
+-- and its alert are never deleted; a dismissal only hides a warning until the
+-- product is restocked (the API prunes stale keys) or its state escalates.
+CREATE TABLE IF NOT EXISTS alert_dismissals (
+  user_id      INT          NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  alert_key    VARCHAR(80)  NOT NULL,
+  dismissed_at TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, alert_key)
+);
+CREATE INDEX IF NOT EXISTS idx_alert_dismissals_user ON alert_dismissals (user_id);
+ALTER TABLE alert_dismissals ENABLE ROW LEVEL SECURITY;
 
 CREATE TABLE IF NOT EXISTS sales (
   id               SERIAL PRIMARY KEY,
