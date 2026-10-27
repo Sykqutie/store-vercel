@@ -16,6 +16,9 @@
   var categoryTouched = false;
   var suggestTimer;
   var suggestSeq = 0;
+  var sizeTouched = false;
+  var sizeSuggestTimer;
+  var sizeSuggestSeq = 0;
   var offlineMode = !A.isOnline();
   var sortKey = 'name', sortDir = 1;
 
@@ -28,6 +31,10 @@
     '<label for="name">Item name<input id="name" maxlength="150" required></label>' +
     '<label for="category">Category<input id="category" maxlength="60" list="categoryOptions" autocomplete="off" placeholder="Leave blank to auto-categorize"><datalist id="categoryOptions"></datalist></label>' +
     '<div class="note" id="catHint" aria-live="polite">Leave blank to auto-categorize. Suggestions never replace a category you type.</div>' +
+    '<div class="row2"><label for="sizeValue">Size / volume value (optional)<input id="sizeValue" type="number" step="0.001" min="0.001" placeholder="e.g. 500"></label>' +
+    '<label for="sizeUnit">Unit<select id="sizeUnit"><option value="">No size</option><option value="mL">mL</option><option value="L">L</option><option value="g">g</option><option value="kg">kg</option><option value="mg">mg</option><option value="pcs">pcs</option><option value="sachet">sachet</option></select></label></div>' +
+    '<label for="sizeLabel">Display label (optional)<input id="sizeLabel" maxlength="60" placeholder="e.g. 500 mL or 12 mL sachet"></label>' +
+    '<div class="note" id="sizeHint" aria-live="polite">Size is optional. Suggestions never replace size you enter.</div>' +
     '<div class="row2"><label for="cost">Cost price (₱)<input id="cost" type="number" step="0.01" min="0" required></label>' +
     '<label for="price">Selling price (₱)<input id="price" type="number" step="0.01" min="0" required></label></div>' +
     '<div class="row2"><label for="stock">Quantity to add<input id="stock" type="number" step="1" min="0" required></label>' +
@@ -40,7 +47,7 @@
     '<div class="btn-row" style="margin-bottom:10px"><button class="btn sm" id="syncNow" type="button">Sync now</button></div>' +
     '<div id="queueList"><div class="empty">No queued changes.</div></div></div></div>' +
     '<div class="panel pad"><div class="ph"><h2>Inventory</h2><span class="inv-meta"><span class="mono mute" id="count"></span><span class="mono lk-total" id="invValue" aria-live="polite"></span><a class="btn sm" href="/categories">Manage categories</a></span></div>' +
-    '<div class="toolbar"><input id="q" type="search" placeholder="Search name, barcode or category" aria-label="Search inventory">' +
+    '<div class="toolbar"><input id="q" type="search" placeholder="Search name, barcode, size or category" aria-label="Search inventory">' +
     '<select id="catFilter" class="cat-select" aria-label="Filter by category"><option value="">All categories</option></select>' +
     '<div class="chips" id="chips"></div></div>' +
     '<div class="tw"><table id="invTable"><thead><tr><th>Barcode (scan)</th><th class="sortable" data-sort="name" role="columnheader">Name <span class="sort-ind" data-ind="name"></span></th><th class="n">Cost</th><th class="n sortable" data-sort="price" role="columnheader">Price <span class="sort-ind" data-ind="price"></span></th><th class="sortable" data-sort="stock" role="columnheader">Stock <span class="sort-ind" data-ind="stock"></span></th><th class="sortable" data-sort="expiry_date" role="columnheader">Expiry <span class="sort-ind" data-ind="expiry_date"></span></th><th>Status</th><th></th></tr></thead><tbody id="body"></tbody></table></div>' +
@@ -154,6 +161,77 @@
     }, 300);
   }
 
+  function setSizeHint(text) {
+    var hint = A.$('#sizeHint');
+    if (hint) hint.textContent = text;
+  }
+
+  function setSizeFields(size) {
+    A.$('#sizeValue').value = size ? size.value : '';
+    A.$('#sizeUnit').value = size ? size.unit : '';
+    A.$('#sizeLabel').value = size ? size.label : '';
+  }
+
+  function resetSizeField() {
+    sizeTouched = false;
+    sizeSuggestSeq++;
+    clearTimeout(sizeSuggestTimer);
+    setSizeFields(null);
+    setSizeHint('Size is optional. Suggestions never replace size you enter.');
+  }
+
+  function readSizeFields() {
+    var value = A.$('#sizeValue').value.trim();
+    var unit = A.$('#sizeUnit').value;
+    var label = A.$('#sizeLabel').value.trim();
+    if (!value && !unit) {
+      return label
+        ? { error: 'Choose a unit when entering a display label, or clear the label.' }
+        : { value: '', unit: '', label: '' };
+    }
+    if (!value || !unit) return { error: 'Enter both a size value and unit, or leave both blank.' };
+    var n = Number(value);
+    if (!Number.isFinite(n) || n < 0.001) return { error: 'Size value must be at least 0.001.' };
+    if (n > 9999999.999) return { error: 'Size value is too large.' };
+    return { value: value, unit: unit, label: label };
+  }
+
+  function scheduleSizeSuggestion() {
+    if (sizeTouched) return;
+    var name = A.$('#name').value.trim();
+    var barcode = A.$('#barcode').value.trim();
+    clearTimeout(sizeSuggestTimer);
+    if (!name && !barcode) {
+      setSizeFields(null);
+      setSizeHint('Size is optional. Suggestions never replace size you enter.');
+      return;
+    }
+    if (!A.isOnline()) {
+      if (!sizeTouched) setSizeFields(null);
+      setSizeHint('Offline: leave size blank to keep the saved size, or enter it manually.');
+      return;
+    }
+    var seq = ++sizeSuggestSeq;
+    sizeSuggestTimer = setTimeout(function () {
+      A.api('/sizes/suggest?name=' + encodeURIComponent(name) + '&barcode=' + encodeURIComponent(barcode)).then(function (r) {
+        if (seq !== sizeSuggestSeq || sizeTouched) return;
+        if (!r || !r.suggestion) {
+          setSizeFields(null);
+          setSizeHint('No explicit size found. Add one if the package shows it.');
+          return;
+        }
+        setSizeFields(r.suggestion);
+        setSizeHint(r.source === 'existing'
+          ? 'Existing barcode size. You can change it before saving.'
+          : 'Suggested from the item name. Review it before saving.');
+      }).catch(function () {
+        if (seq !== sizeSuggestSeq || sizeTouched) return;
+        setSizeFields(null);
+        setSizeHint('Could not check for a size. Enter it manually if needed.');
+      });
+    }, 300);
+  }
+
   function paintSvg(svg) {
     if (!window.JsBarcode || !svg) return false;
     try {
@@ -185,7 +263,7 @@
     w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Barcode · ' + esc(p.barcode) + '</title>' +
       '<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.8.0/dist/JsBarcode.all.min.js"><\/script>' +
       '<style>body{font-family:Arial,sans-serif;text-align:center;padding:28px;color:#111}h3{margin:0 0 4px;font-size:16px}.meta{color:#555;font-size:13px;margin:4px 0 14px}svg{max-width:100%}button{margin-top:16px;padding:10px 22px;font-size:15px;cursor:pointer}@media print{button{display:none}}</style></head><body>' +
-      '<h3>' + name + '</h3><div class="meta">' + esc(p.barcode) + ' · ' + esc(A.money(p.price)) + '</div>' +
+      '<h3>' + name + '</h3><div class="meta">' + esc(A.sizeText(p)) + ' · ' + esc(p.barcode) + ' · ' + esc(A.money(p.price)) + '</div>' +
       '<svg id="bc"></svg><div><button onclick="window.print()">Print label</button></div>' +
       '<script>JsBarcode("#bc", \'' + code + '\', { format: "CODE128", width: 2, height: 80, displayValue: true });<\/script>' +
       '</body></html>');
@@ -212,7 +290,7 @@
       if (status === 'expiring' && !(p.stock > 0 && days != null && days >= 0 && days <= 30)) return false;
       if (status === 'expired' && !(p.stock > 0 && days != null && days < 0)) return false;
       if (categoryFilter && String(p.category).toLowerCase() !== categoryFilter.toLowerCase()) return false;
-      if (q && String(p.name).toLowerCase().indexOf(q) < 0 && String(p.barcode).toLowerCase().indexOf(q) < 0 && String(p.category).toLowerCase().indexOf(q) < 0) return false;
+      if (q && String(p.name).toLowerCase().indexOf(q) < 0 && String(p.barcode).toLowerCase().indexOf(q) < 0 && String(p.category).toLowerCase().indexOf(q) < 0 && String(p.size_label || '').toLowerCase().indexOf(q) < 0) return false;
       return true;
     });
     var dir = sortDir;
@@ -284,7 +362,7 @@
       var warnRow = p.stock <= 0 || low || (days != null && days <= 7);
       return '<tr class="' + (warnRow ? 'row-low' : '') + '"><td><span class="bc"><svg class="jsbarcode" data-code="' + esc(p.barcode) + '" role="img" aria-label="Barcode ' + esc(p.barcode) + '"></svg></span>' +
         '<span class="mono mute" style="font-size:11px">' + esc(p.barcode) + '</span></td>' +
-        '<td><b>' + esc(p.name) + '</b><span class="sub">' + esc(p.category) + '</span></td>' +
+        '<td><b>' + esc(p.name) + '</b><span class="sub">' + esc(p.category) + ' · ' + esc(A.sizeText(p)) + '</span></td>' +
         '<td class="n mono mute">' + money(p.cost_price) + '</td><td class="n mono">' + money(p.price) + '</td>' +
         '<td class="mono"><b>' + p.stock + '</b></td><td>' + expiryCell(p) + '</td>' +
         '<td>' + statusPills(p) + '</td>' +
@@ -308,6 +386,7 @@
         var desc = r.type === 'adjust'
           ? 'Set stock to <b>' + r.stock + '</b> · ' + esc(r.name)
           : 'Add <b>+' + r.stock + '</b> · ' + esc(r.name) + ' (' + esc(r.barcode) + ')' +
+            (r.size_label ? ' · ' + esc(r.size_label) : '') +
             (r.expiry_date ? ' · expires ' + esc(A.fmtDate(r.expiry_date)) : '');
         var e = r.last_error ? '<div class="mono down" style="font-size:12px">' + esc(r.last_error) + '</div>' : '';
         return '<div class="pend"><div>' + pill + ' <span>' + desc + '</span></div>' + e +
@@ -355,13 +434,19 @@
       barcode: fields.barcode, name: fields.name, category: fields.category,
       cost_price: fields.cost_price, price: fields.price,
       stock: fields.stock, low_stock_threshold: fields.threshold,
-      expiry_date: fields.expiry_date || null
+      expiry_date: fields.expiry_date || null,
+      size_value: fields.size_value, size_unit: fields.size_unit, size_label: fields.size_label
     });
     // Optimistic local update for existing barcodes (prevents oversell display).
     var hit = all.filter(function (p) { return String(p.barcode) === String(fields.barcode); })[0];
     if (hit && window.LocalDB) {
       hit.stock = Number(hit.stock || 0) + Number(fields.stock || 0);
       if (fields.expiry_date) hit.expiry_date = fields.expiry_date;
+      if (fields.size_label) {
+        hit.size_value = Number(fields.size_value);
+        hit.size_unit = fields.size_unit;
+        hit.size_label = fields.size_label;
+      }
       try { await window.LocalDB.put('products', hit); } catch (e) { /* ignore */ }
       render();
     }
@@ -381,8 +466,8 @@
     categoryFilter = this.value;
     render();
   });
-  A.$('#name').addEventListener('input', scheduleSuggestion);
-  A.$('#barcode').addEventListener('input', scheduleSuggestion);
+  A.$('#name').addEventListener('input', function () { scheduleSuggestion(); scheduleSizeSuggestion(); });
+  A.$('#barcode').addEventListener('input', function () { scheduleSuggestion(); scheduleSizeSuggestion(); });
   A.$('#category').addEventListener('input', function () {
     categoryTouched = this.value.trim() !== '';
     if (categoryTouched) {
@@ -392,8 +477,22 @@
       scheduleSuggestion();
     }
   });
+  ['sizeValue', 'sizeUnit', 'sizeLabel'].forEach(function (id) {
+    A.$('#' + id).addEventListener('input', function () {
+      sizeTouched = true;
+      if (id !== 'sizeLabel' && !A.$('#sizeValue').value.trim() && !A.$('#sizeUnit').value) {
+        A.$('#sizeLabel').value = '';
+      }
+      setSizeHint('Manual size. Automatic suggestions will not replace it.');
+    });
+  });
   var genBtn = A.$('#gen');
-  if (genBtn) genBtn.addEventListener('click', function () { A.$('#barcode').value = genBarcode(); A.$('#barcode').focus(); });
+  if (genBtn) genBtn.addEventListener('click', function () {
+    A.$('#barcode').value = genBarcode();
+    scheduleSuggestion();
+    scheduleSizeSuggestion();
+    A.$('#barcode').focus();
+  });
 
   body.addEventListener('click', function (e) {
     var del = e.target.closest('[data-del]');
@@ -459,19 +558,35 @@
     e.preventDefault();
     err.hidden = true;
     var btn = A.$('#save');
+    var sizeInput = readSizeFields();
+    if (sizeInput.error) {
+      err.textContent = sizeInput.error;
+      err.hidden = false;
+      setSizeHint(sizeInput.error);
+      return;
+    }
     btn.disabled = true;
     var fields = {
       barcode: A.$('#barcode').value, name: A.$('#name').value, category: A.$('#category').value,
       cost_price: A.$('#cost').value, price: A.$('#price').value,
       stock: A.$('#stock').value, threshold: A.$('#threshold').value,
-      expiry_date: A.$('#expiry').value
+      expiry_date: A.$('#expiry').value,
+      size_value: sizeInput.value, size_unit: sizeInput.unit, size_label: sizeInput.label
+    };
+    var offlinePayload = {
+      barcode: fields.barcode, name: fields.name, category: fields.category,
+      cost_price: fields.cost_price, price: fields.price,
+      stock: Number(fields.stock || 0), low_stock_threshold: Number(fields.threshold || 5),
+      expiry_date: fields.expiry_date || null,
+      size_value: fields.size_value, size_unit: fields.size_unit, size_label: fields.size_label
     };
     try {
       if (!A.isOnline()) {
-        await queueOfflineOp({ barcode: fields.barcode, name: fields.name, category: fields.category, cost_price: fields.cost_price, price: fields.price, stock: Number(fields.stock || 0), low_stock_threshold: Number(fields.threshold || 5), expiry_date: fields.expiry_date || null });
+        await queueOfflineOp(offlinePayload);
         A.toast('Saved offline — will sync when online.');
         A.$('#f').reset();
         resetCategoryField();
+        resetSizeField();
         A.$('#threshold').value = '5';
         await renderQueue();
       } else {
@@ -481,21 +596,24 @@
               barcode: fields.barcode, name: fields.name, category: fields.category,
               cost_price: fields.cost_price, price: fields.price,
               stock: fields.stock, low_stock_threshold: fields.threshold,
-              expiry_date: fields.expiry_date || null
+              expiry_date: fields.expiry_date || null,
+              size_value: fields.size_value, size_unit: fields.size_unit, size_label: fields.size_label
             }
           });
           A.toast(r.created ? 'Inventory item added' : 'Inventory item restocked');
           A.$('#f').reset();
           resetCategoryField();
+          resetSizeField();
           A.$('#threshold').value = '5';
           await load();
           if (window.StockAlerts) { try { window.StockAlerts.notifyChanged(); } catch (x) {} }
         } catch (ex) {
           if (netErr(ex)) {
-            await queueOfflineOp({ barcode: fields.barcode, name: fields.name, category: fields.category, cost_price: fields.cost_price, price: fields.price, stock: Number(fields.stock || 0), low_stock_threshold: Number(fields.threshold || 5), expiry_date: fields.expiry_date || null });
+            await queueOfflineOp(offlinePayload);
             A.toast('Connection lost — queued for sync.', true);
             A.$('#f').reset();
             resetCategoryField();
+            resetSizeField();
             A.$('#threshold').value = '5';
           } else {
             throw ex;

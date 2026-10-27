@@ -7,11 +7,27 @@ const path = require('path');
 const { spawn } = require('child_process');
 const { Client } = require('pg');
 
-const databaseUrl = process.env.CATEGORY_TEST_DATABASE_URL;
-const run = databaseUrl ? test : test.skip;
+const baseDatabaseUrl = process.env.CATEGORY_TEST_DATABASE_URL;
+const run = baseDatabaseUrl ? test : test.skip;
 
 function cookieFrom(res) {
   return String(res.headers.get('set-cookie') || '').split(';')[0];
+}
+
+// Creates a brand-new database in the disposable test server. Nothing is
+// dropped or truncated, so production URLs are rejected up front.
+async function createDisposableDatabase() {
+  const parsed = new URL(baseDatabaseUrl);
+  if (!/^(127\.0\.0\.1|localhost)$/.test(parsed.hostname)) {
+    throw new Error('CATEGORY_TEST_DATABASE_URL must point to a disposable local Postgres server.');
+  }
+  const name = 'smartmart_category_' + crypto.randomBytes(6).toString('hex');
+  const admin = new Client({ connectionString: baseDatabaseUrl });
+  await admin.connect();
+  await admin.query('CREATE DATABASE ' + name);
+  await admin.end();
+  parsed.pathname = '/' + name;
+  return parsed.toString();
 }
 
 async function waitForServer(base, child, logs) {
@@ -28,14 +44,10 @@ async function waitForServer(base, child, logs) {
 }
 
 run('category API works end to end with ownership and fallback protection', { timeout: 90000 }, async () => {
+  const databaseUrl = await createDisposableDatabase();
   const port = 5700 + Math.floor(Math.random() * 200);
   const base = 'http://127.0.0.1:' + port;
   const root = path.join(__dirname, '..');
-  const admin = new Client({ connectionString: databaseUrl });
-  await admin.connect();
-  await admin.query('DROP SCHEMA public CASCADE');
-  await admin.query('CREATE SCHEMA public');
-  await admin.end();
 
   const logs = [];
   const child = spawn(process.execPath, ['dev.js'], {

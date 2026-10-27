@@ -15,6 +15,10 @@
   function money(n) {
     return '₱' + Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
+  function sizeText(p) {
+    var label = p && p.size_label;
+    return label ? String(label) : 'Size not specified';
+  }
   function fmtDT(d) {
     return new Date(d).toLocaleString('en-PH', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   }
@@ -320,5 +324,5 @@
     return document.getElementById('main');
   }
 
-  window.App = { $: $, esc: esc, money: money, fmtDT: fmtDT, fmtDate: fmtDate, daysUntil: daysUntil, qs: qs, api: api, toast: toast, countTo: countTo, reveal: reveal, mountShell: mountShell, root: root, isOnline: isOnline, noteRefreshed: noteRefreshed, me: session };
+  window.App = { $: $, esc: esc, money: money, sizeText: sizeText, fmtDT: fmtDT, fmtDate: fmtDate, daysUntil: daysUntil, qs: qs, api: api, toast: toast, countTo: countTo, reveal: reveal, mountShell: mountShell, root: root, isOnline: isOnline, noteRefreshed: noteRefreshed, me: session };
 })();

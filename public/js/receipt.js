@@ -40,7 +40,8 @@
     sale.items.forEach(function (l) { total += Number(l.price || 0) * Number(l.qty || 0); });
     var vat = Math.round(total * 100 * 12 / 112) / 100;
     var items = sale.items.map(function (l) {
-      return '<div class="rw"><span>' + l.qty + 'x ' + esc(l.name) + '</span><span>' + money(Number(l.price) * Number(l.qty)) + '</span></div>';
+      var size = l.size_label ? '<span class="item-sub">' + esc(l.size_label) + '</span>' : '';
+      return '<div class="rw"><span>' + l.qty + 'x ' + esc(l.name) + size + '</span><span>' + money(Number(l.price) * Number(l.qty)) + '</span></div>';
     }).join('');
     var store = 'SmartMart';
     try {
@@ -71,7 +72,8 @@
   var s = r.sale;
 
   var rows = r.items.map(function (i) {
-    return '<div class="rw"><span>' + i.quantity + 'x ' + esc(i.product_name) + '</span><span>' + money(i.subtotal) + '</span></div>';
+    var size = i.size_label ? '<span class="item-sub">' + esc(i.size_label) + '</span>' : '';
+    return '<div class="rw"><span>' + i.quantity + 'x ' + esc(i.product_name) + size + '</span><span>' + money(i.subtotal) + '</span></div>';
   }).join('');
 
   A.root.innerHTML =

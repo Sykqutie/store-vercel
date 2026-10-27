@@ -30,7 +30,7 @@
     '<div class="panel pad"><div class="ph"><h2>Search transaction records</h2></div>' +
     '<form id="f" class="search-form">' +
     '<label for="date">Date<input id="date" type="date"></label>' +
-    '<label for="search">Item or transaction ID<input id="search" type="search" placeholder="Search by item name or transaction ID"></label>' +
+    '<label for="search">Item, size, or transaction ID<input id="search" type="search" placeholder="Search by item name, size, or transaction ID"></label>' +
     '<button class="btn primary" type="submit">Search</button></form>' +
     '<div class="tw"><table><thead><tr><th>Transaction ID</th><th>Date &amp; time</th><th>Payment</th><th class="n">Total</th><th class="n">Net profit</th><th></th></tr></thead><tbody id="body"></tbody></table></div></div></div>' +
     '<div id="viewStats" hidden>' +
@@ -216,7 +216,7 @@
     A.$('#topMeta').textContent = tops.length ? 'Top ' + tops.length + ' by units' : '';
     A.$('#topList').innerHTML = tops.length ? tops.map(function (t, i) {
       var medal = i === 0 ? 'g' : i === 1 ? 's' : i === 2 ? 'b' : '';
-      return '<div class="li"><span class="t rank"><span class="rank-n ' + medal + '">' + (i + 1) + '</span><b>' + esc(t.product_name) + '</b></span>' +
+      return '<div class="li"><span class="t rank"><span class="rank-n ' + medal + '">' + (i + 1) + '</span><b>' + esc(t.product_name) + ' · ' + esc(A.sizeText(t)) + '</b></span>' +
         '<span class="pill tier">' + t.qty + ' sold · ' + money(t.revenue) + '</span></div>';
     }).join('') : '<div class="empty">No sales yet in this period.</div>';
 
@@ -235,7 +235,7 @@
       var initials = String(l.product_name).split(/\s+/).slice(0, 2).map(function (w) { return w[0]; }).join('').toUpperCase();
       return '<div class="lead"><span class="hx">' + esc(initials) + '</span>' +
         '<div class="lead-body"><span class="sub">' + esc(c) + '</span><b>' + esc(l.product_name) + '</b>' +
-        '<span class="sub">' + l.qty + ' sold · ' + money(l.revenue) + '</span></div>' +
+        '<span class="sub">' + esc(A.sizeText(l)) + ' · ' + l.qty + ' sold · ' + money(l.revenue) + '</span></div>' +
         '<span class="pill tier">Top</span></div>';
     }).join('') : '<div class="empty">No categories yet. Add inventory to begin.</div>';
   }
@@ -267,7 +267,7 @@
     var sum = r.summary || { txns: 0, sales: 0, tax: 0, items: 0 };
     var cards = [
       ['Total transactions', sum.txns, 'desc', function (v) { return String(Math.round(v)); }, 'Sales in this period'],
-      ['Total sales', sum.sales, 'desc', money, r.best ? 'Top: ' + r.best.product_name : 'No sales yet'],
+      ['Total sales', sum.sales, 'desc', money, r.best ? 'Top: ' + r.best.product_name + ' · ' + A.sizeText(r.best) : 'No sales yet'],
       ['Total tax', sum.tax, 'desc', money, 'VAT 12% included'],
       ['Items sold', sum.items, 'desc', function (v) { return Number(v).toLocaleString(); }, 'Units moved']
     ];

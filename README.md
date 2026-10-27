@@ -143,6 +143,7 @@ Postgres is running (local Docker: `docker start smartmart-pg`).
 - **CSV export works.** The PHP query used columns that do not exist (`transaction_no`, a join to `products`). The new export reads `sales` and `sale_items` and honors the report's date and search filters. Cells that start with `=`, `+`, `-` or `@` are escaped.
 - **Product form has a Category field** (the old form skipped it, so everything was "General").
 - **Automatic categories:** new items with a blank category are classified from their name (and an existing barcode's category when restocking). Owners can manage categories at `/categories`, rename or deactivate them, and merge one into another without touching product IDs or sales history. `Uncategorized` is the protected fallback.
+- **Product sizes / volumes:** products can store an optional structured size (`value`, unit, and display label, such as `500 mL` or `12 mL sachet`). Inventory and Edit Product suggest a size only from an explicit number+unit in the item name or an existing barcode; suggestions are never saved automatically, and ordinary name edits/restocks keep a manually confirmed size. Missing sizes show **Size not specified**. Sales snapshot the size into `sale_items`, so receipts and reports preserve historical labels and group variants separately. Existing products and older backups remain valid with null sizes.
 - **Logins:** failed attempts are slowed down, cookies are `HttpOnly`, `SameSite=Lax` and `Secure`, and write requests must be JSON (blocks cross-site form posts).
 
 ## Backup & Restore (owner only)
@@ -151,7 +152,8 @@ The **Backup** page (`/backup`, owner-only — cashiers see a restricted page)
 protects all store data: users + password hashes, categories, products, sales,
 sale items, stock movements, plus store/timezone metadata. Older backups that
 predate categories are still accepted and rebuilt from product labels on
-restore. Backups are portable JSON files
+restore. Backups without product/sale size fields are also accepted; restored
+rows simply have no size. Backups are portable JSON files
 named `smartmart-backup-YYYYMMDD-HHMMSS-mmm-<kind>.json` (older files without
 the milliseconds part are still accepted), checksummed and verified before
 success is reported. No `pg_dump` binary or superuser rights needed.

@@ -14,6 +14,23 @@
 - Backups now include categories. Restoring an older backup without categories
   rebuilds the table from default names and existing product labels.
 
+## Product size / volume labels (local implementation)
+
+- Adds nullable `products.size_value`, `products.size_unit`, `products.size_label`
+  and a `sale_items.size_label` snapshot. The API migration is additive and
+  idempotent (`ADD COLUMN IF NOT EXISTS`); no rows are backfilled.
+- Sizes are parsed only from an explicit number + supported unit (`mL`, `L`,
+  `g`, `kg`, `mg`, `pcs`, `sachet`) in the item name or an existing barcode.
+  Bare numbers, brands, categories, and ambiguous multi-size names are ignored.
+- Inventory add/restock may auto-suggest a size, but suggestions are visible
+  fields only and are not saved unless submitted. Edit Product requires an
+  explicit Suggest action and never overwrites a saved size on name changes.
+- Blank size on barcode restock keeps the existing size. Existing products,
+  old offline payloads, and backups without size fields remain compatible.
+- Checkout snapshots the size into `sale_items`; receipts omit absent sizes,
+  while reports, CSV, dashboard rankings, and search group/display name + size.
+- This has not been run against the production database or deployed yet.
+
 ## Where things stand
 
 - The app talks to Postgres **server-side only** (`pg` + `lib/db.js`). No browser

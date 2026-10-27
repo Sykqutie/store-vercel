@@ -53,6 +53,7 @@ tr.row-low{background:rgba(255,92,122,.06)}
 .paper .store{font-size:18px;font-weight:700;letter-spacing:.06em}
 .paper hr{border:0;border-top:1px dashed #111;margin:10px 0}
 .paper .rw{display:flex;justify-content:space-between;gap:10px}
+.paper .item-sub{display:block;font-size:11px;color:#555;line-height:1.25}
 .paper .rw span:first-child{min-width:0;overflow-wrap:anywhere}
 .paper .tot{font-size:17px;font-weight:700}
 .paper .no-print{margin-top:12px}

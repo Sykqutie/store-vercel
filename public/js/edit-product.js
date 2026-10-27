@@ -33,6 +33,13 @@
     '<label for="name">Item name<input id="name" maxlength="150" required value="' + esc(p.name) + '"></label>' +
     '<label for="category">Category<span class="bc-row"><input id="category" maxlength="60" list="categoryOptions" autocomplete="off" required value="' + esc(p.category) + '"><button class="btn sm" id="suggestCat" type="button">Suggest</button></span><datalist id="categoryOptions"></datalist></label>' +
     '<div class="note" id="catHint">The saved category is never changed automatically. Use Suggest only when you want a new recommendation.</div>' +
+    '<div class="row2"><label for="sizeValue">Size / volume value (optional)<input id="sizeValue" type="number" step="0.001" min="0.001" placeholder="e.g. 500" value="' + esc(p.size_value == null ? '' : p.size_value) + '"></label>' +
+    '<label for="sizeUnit">Unit<select id="sizeUnit"><option value="">No size</option>' +
+    ['mL', 'L', 'g', 'kg', 'mg', 'pcs', 'sachet'].map(function (u) {
+      return '<option value="' + u + '"' + (p.size_unit === u ? ' selected' : '') + '>' + u + '</option>';
+    }).join('') + '</select></label></div>' +
+    '<label for="sizeLabel">Display label (optional)<span class="bc-row"><input id="sizeLabel" maxlength="60" placeholder="e.g. 500 mL or 12 mL sachet" value="' + esc(p.size_label || '') + '"><button class="btn sm" id="suggestSize" type="button">Suggest</button></span></label>' +
+    '<div class="note" id="sizeHint">Current size: ' + esc(A.sizeText(p)) + '. The saved size is never changed automatically.</div>' +
     '<div class="row2"><label for="cost">Cost price (₱)<input id="cost" type="number" step="0.01" min="0" required value="' + p.cost_price + '"></label>' +
     '<label for="price">Price (₱)<input id="price" type="number" step="0.01" min="0" required value="' + p.price + '"></label></div>' +
     '<div class="row2"><label for="stock">Stock quantity<input id="stock" type="number" step="1" min="0" required value="' + p.stock + '"></label>' +
@@ -95,6 +102,51 @@
       btn.disabled = false;
     }
   });
+  ['sizeValue', 'sizeUnit', 'sizeLabel'].forEach(function (field) {
+    A.$('#' + field).addEventListener('input', function () {
+      if (field !== 'sizeLabel' && !A.$('#sizeValue').value.trim() && !A.$('#sizeUnit').value) {
+        A.$('#sizeLabel').value = '';
+      }
+      A.$('#sizeHint').textContent = 'Manual size. The saved size is only changed when you save.';
+    });
+  });
+  function readSizeFields() {
+    var value = A.$('#sizeValue').value.trim();
+    var unit = A.$('#sizeUnit').value;
+    var label = A.$('#sizeLabel').value.trim();
+    if (!value && !unit) {
+      return label
+        ? { error: 'Choose a unit when entering a display label, or clear the label.' }
+        : { value: '', unit: '', label: '' };
+    }
+    if (!value || !unit) return { error: 'Enter both a size value and unit, or leave both blank.' };
+    var n = Number(value);
+    if (!Number.isFinite(n) || n < 0.001) return { error: 'Size value must be at least 0.001.' };
+    if (n > 9999999.999) return { error: 'Size value is too large.' };
+    return { value: value, unit: unit, label: label };
+  }
+  A.$('#suggestSize').addEventListener('click', async function () {
+    var btn = this;
+    var name = A.$('#name').value.trim();
+    if (!name) { A.$('#sizeHint').textContent = 'Enter an item name first.'; return; }
+    if (!A.isOnline()) { A.$('#sizeHint').textContent = 'Suggestions need a connection.'; return; }
+    btn.disabled = true;
+    try {
+      var r = await A.api('/sizes/suggest?name=' + encodeURIComponent(name));
+      if (r && r.suggestion) {
+        A.$('#sizeValue').value = r.suggestion.value;
+        A.$('#sizeUnit').value = r.suggestion.unit;
+        A.$('#sizeLabel').value = r.suggestion.label;
+        A.$('#sizeHint').textContent = 'Suggested from the item name. Review it before saving.';
+      } else {
+        A.$('#sizeHint').textContent = 'No explicit size found. Enter one only if the package shows it.';
+      }
+    } catch (e) {
+      A.$('#sizeHint').textContent = e.message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
   A.$('#printBc').addEventListener('click', function () {
     var code = String(p.barcode).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     var w = window.open('', '_blank', 'width=420,height=360');
@@ -102,7 +154,7 @@
     w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Barcode · ' + esc(p.barcode) + '</title>' +
       '<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.8.0/dist/JsBarcode.all.min.js"><\/script>' +
       '<style>body{font-family:Arial,sans-serif;text-align:center;padding:28px;color:#111}h3{margin:0 0 4px;font-size:16px}.meta{color:#555;font-size:13px;margin:4px 0 14px}svg{max-width:100%}button{margin-top:16px;padding:10px 22px;font-size:15px;cursor:pointer}@media print{button{display:none}}</style></head><body>' +
-      '<h3>' + esc(p.name) + '</h3><div class="meta">' + esc(p.barcode) + '</div>' +
+      '<h3>' + esc(p.name) + '</h3><div class="meta">' + esc(A.sizeText(p)) + ' · ' + esc(p.barcode) + '</div>' +
       '<svg id="bc"></svg><div><button onclick="window.print()">Print label</button></div>' +
       '<script>JsBarcode("#bc", \'' + code + '\', { format: "CODE128", width: 2, height: 80, displayValue: true });<\/script>' +
       '</body></html>');
@@ -113,11 +165,19 @@
     e.preventDefault();
     var err = A.$('#err'), btn = A.$('#save');
     err.hidden = true;
+    var sizeInput = readSizeFields();
+    if (sizeInput.error) {
+      err.textContent = sizeInput.error;
+      err.hidden = false;
+      A.$('#sizeHint').textContent = sizeInput.error;
+      return;
+    }
     btn.disabled = true;
     var fields = {
       name: A.$('#name').value, category: A.$('#category').value, cost_price: A.$('#cost').value,
       price: A.$('#price').value, stock: A.$('#stock').value, low_stock_threshold: A.$('#threshold').value,
-      expiry_date: A.$('#expiry').value || null
+      expiry_date: A.$('#expiry').value || null,
+      size_value: sizeInput.value, size_unit: sizeInput.unit, size_label: sizeInput.label
     };
     // Offline (or lost connection): queue an adjust op with base_stock for conflict safety.
     if (!A.isOnline()) {
@@ -127,7 +187,8 @@
           type: 'adjust', product_id: id, barcode: p.barcode,
           name: fields.name, category: fields.category, cost_price: fields.cost_price,
           price: fields.price, stock: Number(fields.stock), low_stock_threshold: Number(fields.low_stock_threshold),
-          expiry_date: fields.expiry_date, base_stock: p.stock
+          expiry_date: fields.expiry_date, base_stock: p.stock,
+          size_value: fields.size_value, size_unit: fields.size_unit, size_label: fields.size_label
         });
         A.toast('Saved offline — will sync when online.');
         location.href = '/inventory';
@@ -153,7 +214,8 @@
             type: 'adjust', product_id: id, barcode: p.barcode,
             name: fields.name, category: fields.category, cost_price: fields.cost_price,
             price: fields.price, stock: Number(fields.stock), low_stock_threshold: Number(fields.low_stock_threshold),
-            expiry_date: fields.expiry_date, base_stock: p.stock
+            expiry_date: fields.expiry_date, base_stock: p.stock,
+            size_value: fields.size_value, size_unit: fields.size_unit, size_label: fields.size_label
           });
           A.toast('Connection lost — change queued for sync.', true);
           location.href = '/inventory';

@@ -18,6 +18,9 @@ CREATE TABLE IF NOT EXISTS products (
   barcode              VARCHAR(64)   NOT NULL UNIQUE,
   name                 VARCHAR(150)  NOT NULL,
   category             VARCHAR(60)   NOT NULL DEFAULT 'General',
+  size_value           NUMERIC(10,3),
+  size_unit            VARCHAR(10),
+  size_label           VARCHAR(60),
   cost_price           NUMERIC(10,2) NOT NULL DEFAULT 0,
   price                NUMERIC(10,2) NOT NULL DEFAULT 0,
   stock                INT           NOT NULL DEFAULT 0 CHECK (stock >= 0),
@@ -76,6 +79,7 @@ CREATE TABLE IF NOT EXISTS sale_items (
   sale_id       INT           NOT NULL REFERENCES sales (id) ON DELETE CASCADE,
   product_id    INT,
   product_name  VARCHAR(150)  NOT NULL,
+  size_label    VARCHAR(60),
   quantity      INT           NOT NULL DEFAULT 1,
   price         NUMERIC(10,2) NOT NULL DEFAULT 0,
   subtotal      NUMERIC(12,2) NOT NULL DEFAULT 0

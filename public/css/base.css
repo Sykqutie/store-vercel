@@ -147,6 +147,7 @@ label input,label select{text-transform:none;letter-spacing:0;font-family:var(--
 .pc .nm{font-weight:600;line-height:1.25;min-height:2.5em}
 .pc .pr{font-family:var(--font-m);color:var(--cyan);font-weight:500}
 .pc .st{font-family:var(--font-m);font-size:11px;color:var(--mute)}
+.pc .pc-size{font-family:var(--font-m);font-size:11px;color:var(--fg);opacity:.72;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pc.flash{animation:flash .45s ease}
 @keyframes flash{30%{box-shadow:0 0 0 2px var(--cyan),0 0 30px rgba(32,217,245,.6)}}
 .cart{position:sticky;top:12px;display:flex;flex-direction:column;gap:12px}
@@ -154,6 +155,7 @@ label input,label select{text-transform:none;letter-spacing:0;font-family:var(--
 .line{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;gap:10px;align-items:center;padding:8px 0;border-bottom:1px dashed var(--line);animation:slide .3s ease both}
 @keyframes slide{from{opacity:0;transform:translateX(16px)}to{opacity:1;transform:none}}
 .line .ln b{display:block;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.line .line-size{display:block;font-family:var(--font-m);font-size:11px;color:var(--mute);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:2px}
 .qty{display:flex;align-items:center;gap:6px}
 .qty button,.x{width:26px;height:26px;border-radius:8px;border:1px solid var(--line-strong);background:transparent;cursor:pointer;line-height:1}
 .qty button:hover,.x:hover{border-color:var(--cyan);color:var(--cyan)}

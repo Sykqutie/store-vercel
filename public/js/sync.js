@@ -74,7 +74,7 @@
   function queueSale(input) {
     return mustDB().then(function () {
       var items = (input.items || []).map(function (l) {
-        return { id: Number(l.id), qty: Number(l.qty), name: String(l.name || ''), price: Number(l.price || 0), barcode: String(l.barcode || '') };
+        return { id: Number(l.id), qty: Number(l.qty), name: String(l.name || ''), price: Number(l.price || 0), barcode: String(l.barcode || ''), size_label: l.size_label ? String(l.size_label) : null };
       }).filter(function (l) { return l.id > 0 && l.qty > 0; });
       if (!items.length) throw new Error('The cart is empty.');
       var tendered = Number(input.amount_tendered || 0);
@@ -121,6 +121,14 @@
       // Keep undefined distinct from blank: old queued records must not clear
       // an expiry date that was already stored on the server.
       if (op.expiry_date !== undefined) rec.expiry_date = op.expiry_date || null;
+      // Same rule for size: records queued before this feature have no size
+      // fields and must keep the server's existing size untouched.
+      if (op.size_value !== undefined || op.size_unit !== undefined || op.size_label !== undefined) {
+        var value = op.size_value === undefined || op.size_value === null || op.size_value === '' ? null : Number(op.size_value);
+        rec.size_value = Number.isFinite(value) ? value : null;
+        rec.size_unit = op.size_unit ? String(op.size_unit) : null;
+        rec.size_label = op.size_label ? String(op.size_label) : null;
+      }
       if (!rec.barcode && !rec.product_id) throw new Error('Barcode is required for queued inventory changes.');
       return window.LocalDB.put('inventory_queue', rec).then(function () {
         emit();
@@ -227,15 +235,26 @@
         };
         if (rec.expiry_date !== undefined) body.expiry_date = rec.expiry_date;
         if (rec.base_stock != null) body.base_stock = rec.base_stock;
+        if (rec.size_value !== undefined || rec.size_unit !== undefined || rec.size_label !== undefined) {
+          body.size_value = rec.size_value;
+          body.size_unit = rec.size_unit;
+          body.size_label = rec.size_label;
+        }
         p = window.App.api('/products/' + rec.product_id, { method: 'PUT', body: body, noRedirect: true });
       } else {
+        var restockBody = {
+          barcode: rec.barcode, name: rec.name, category: rec.category,
+          cost_price: rec.cost_price, price: rec.price,
+          stock: rec.stock, low_stock_threshold: rec.low_stock_threshold,
+          expiry_date: rec.expiry_date === undefined ? null : rec.expiry_date
+        };
+        if (rec.size_value !== undefined || rec.size_unit !== undefined || rec.size_label !== undefined) {
+          restockBody.size_value = rec.size_value;
+          restockBody.size_unit = rec.size_unit;
+          restockBody.size_label = rec.size_label;
+        }
         p = window.App.api('/products', {
-          body: {
-            barcode: rec.barcode, name: rec.name, category: rec.category,
-            cost_price: rec.cost_price, price: rec.price,
-            stock: rec.stock, low_stock_threshold: rec.low_stock_threshold,
-            expiry_date: rec.expiry_date === undefined ? null : rec.expiry_date
-          },
+          body: restockBody,
           noRedirect: true
         });
       }

@@ -7,6 +7,7 @@ const db = require('../lib/db');
 const auth = require('../lib/auth');
 const SCHEMA = require('../lib/schema');
 const categories = require('../lib/categories');
+const sizes = require('../lib/sizes');
 const { tz, periodStats, chart7 } = require('../lib/stats');
 
 const app = express();
@@ -61,7 +62,7 @@ const dateOnly = (v) => {
   if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== s) return undefined;
   return s;
 };
-const PRODUCT_COLS = `id, barcode, name, category, cost_price::float8 AS cost_price, price::float8 AS price, stock, low_stock_threshold, to_char(expiry_date, 'YYYY-MM-DD') AS expiry_date`;
+const PRODUCT_COLS = `id, barcode, name, category, size_value::float8 AS size_value, size_unit, size_label, cost_price::float8 AS cost_price, price::float8 AS price, stock, low_stock_threshold, to_char(expiry_date, 'YYYY-MM-DD') AS expiry_date`;
 const FALLBACK_CATEGORY = categories.FALLBACK_CATEGORY;
 const CATEGORY_COLS = 'id, name, active, created_at, updated_at';
 // Cashiers get POS only — no inventory management. Cost, thresholds and
@@ -192,6 +193,53 @@ function ensureCategorySchema() {
   return categorySchemaMigration;
 }
 ensureCategorySchema();
+
+// Product size/volume fields. Additive and nullable by design: existing rows
+// keep working as "Size not specified" and old backups restore with nulls.
+let sizeSchemaMigration = null;
+function ensureSizeSchema() {
+  if (!sizeSchemaMigration) {
+    sizeSchemaMigration = (async () => {
+      try {
+        await db.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS size_value NUMERIC(10,3)');
+        await db.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS size_unit VARCHAR(10)');
+        await db.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS size_label VARCHAR(60)');
+        await db.query('ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS size_label VARCHAR(60)');
+      } catch (e) {
+        // Table may not exist yet (pre-install). Retry on the next request.
+        console.error('size schema migration deferred:', e.message);
+        sizeSchemaMigration = null;
+      }
+    })();
+  }
+  return sizeSchemaMigration;
+}
+ensureSizeSchema();
+
+function submittedSize(body) {
+  const provided = body.size_value !== undefined || body.size_unit !== undefined || body.size_label !== undefined;
+  if (!provided) return { provided: false, size: null };
+  const size = sizes.cleanSize(body.size_value, body.size_unit, body.size_label);
+  return { provided: true, size };
+}
+
+async function sizeSuggestion(name, barcode) {
+  if (barcode) {
+    const { rows: [existing] } = await db.query(
+      'SELECT size_value::float8 AS size_value, size_unit, size_label FROM products WHERE barcode = $1',
+      [barcode]
+    );
+    if (existing && existing.size_value !== null && existing.size_unit && existing.size_label) {
+      return {
+        suggestion: { value: existing.size_value, unit: existing.size_unit, label: existing.size_label },
+        source: 'existing'
+      };
+    }
+  }
+  const guessed = name ? sizes.fromName(name) : null;
+  if (guessed) return { suggestion: guessed, source: 'name' };
+  return { suggestion: null, source: 'none' };
+}
 
 async function categoryByName(name, runner) {
   const q = runner || db;
@@ -627,16 +675,17 @@ async function buildAlertData(userId) {
 
 // ---------- dashboard (owner only) ----------
 api.get('/dashboard', loadAccount, requireOwner, wrap(async (req, res) => {
+  await ensureSizeSchema();
   const [stats, chart, inv, low, lowCount, outCount, todayItems, recent, top, cats, alertData] = await Promise.all([
     periodStats(),
     chart7(),
     db.query(`SELECT COUNT(*)::int AS skus, COALESCE(SUM(stock),0)::int AS units, COALESCE(SUM(stock*price),0)::float8 AS value_amt FROM products`),
-    db.query(`SELECT id, barcode, name, category, stock, low_stock_threshold FROM products WHERE stock <= low_stock_threshold ORDER BY stock ASC, name ASC LIMIT 8`),
+    db.query(`SELECT id, barcode, name, category, size_label, stock, low_stock_threshold FROM products WHERE stock <= low_stock_threshold ORDER BY stock ASC, name ASC LIMIT 8`),
     db.query(`SELECT COUNT(*)::int AS n FROM products WHERE stock <= low_stock_threshold`),
     db.query(`SELECT COUNT(*)::int AS n FROM products WHERE stock <= 0`),
     db.query(`SELECT COALESCE(SUM(si.quantity),0)::int AS items FROM sale_items si JOIN sales s ON s.id = si.sale_id WHERE (s.sale_date AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date`, [tz()]),
     db.query(`SELECT id, transaction_id, total_amount::float8 AS total_amount, profit::float8 AS profit, payment_method, sale_date FROM sales ORDER BY sale_date DESC LIMIT 8`),
-    db.query(`SELECT product_name, SUM(quantity)::int AS qty, SUM(subtotal)::float8 AS amt FROM sale_items GROUP BY product_name ORDER BY qty DESC LIMIT 5`),
+    db.query(`SELECT product_name, size_label, SUM(quantity)::int AS qty, SUM(subtotal)::float8 AS amt FROM sale_items GROUP BY product_name, size_label ORDER BY qty DESC, product_name ASC, size_label ASC LIMIT 5`),
     db.query(`SELECT category, SUM(stock)::int AS units FROM products GROUP BY category ORDER BY units DESC LIMIT 6`),
     buildAlertData(req.user.uid)
   ]);
@@ -769,6 +818,14 @@ api.get('/categories/suggest', loadAccount, requireOwner, wrap(async (req, res) 
   res.json({ suggestion, source });
 }));
 
+api.get('/sizes/suggest', loadAccount, requireOwner, wrap(async (req, res) => {
+  await ensureSizeSchema();
+  const name = text(req.query.name, 150);
+  const barcode = text(req.query.barcode, 64);
+  if (!name && !barcode) return bad(res, 'Enter an item name or barcode.');
+  res.json(await sizeSuggestion(name, barcode));
+}));
+
 api.post('/categories', loadAccount, requireOwner, wrap(async (req, res) => {
   await ensureCategorySchema();
   const name = categories.cleanName(req.body.name);
@@ -890,6 +947,7 @@ api.post('/categories/:id/merge', loadAccount, requireOwner, wrap(async (req, re
 // publicProduct) — POS-only, no inventory data.
 api.get('/products', wrap(async (req, res) => {
   await ensureAlertSchema();
+  await ensureSizeSchema();
   const q = text(req.query.q, 100);
   const category = text(req.query.category, 60);
   const status = String(req.query.status || '');
@@ -897,7 +955,7 @@ api.get('/products', wrap(async (req, res) => {
   const params = [];
   if (q) {
     params.push(likePattern(q));
-    where.push(`(name ILIKE $${params.length} OR barcode ILIKE $${params.length} OR category ILIKE $${params.length})`);
+    where.push(`(name ILIKE $${params.length} OR barcode ILIKE $${params.length} OR category ILIKE $${params.length} OR size_label ILIKE $${params.length})`);
   }
   if (category) {
     params.push(category);
@@ -923,6 +981,7 @@ api.get('/products', wrap(async (req, res) => {
 
 api.get('/products/:id', wrap(async (req, res) => {
   await ensureAlertSchema();
+  await ensureSizeSchema();
   const id = number(req.params.id, { min: 1, int: true });
   if (!id) return bad(res, 'Product not found.', 404);
   const { rows: [p] } = await db.query(`SELECT ${PRODUCT_COLS} FROM products WHERE id = $1`, [id]);
@@ -934,6 +993,7 @@ api.get('/products/:id', wrap(async (req, res) => {
 api.post('/products', loadAccount, requireOwner, wrap(async (req, res) => {
   await ensureAlertSchema();
   await ensureCategorySchema();
+  await ensureSizeSchema();
   const b = req.body;
   const barcode = text(b.barcode, 64);
   const name = text(b.name, 150);
@@ -944,11 +1004,13 @@ api.post('/products', loadAccount, requireOwner, wrap(async (req, res) => {
   const stock = number(b.stock, { max: 1e6, int: true });
   const threshold = number(b.low_stock_threshold, { max: 1e6, int: true });
   const expiry = b.expiry_date === undefined ? null : dateOnly(b.expiry_date);
+  const sizeInput = submittedSize(b);
   if (!barcode || !name) return bad(res, 'Barcode and item name are required.');
   if (suppliedCategory && !requestedCategory) return bad(res, 'Category must be 60 characters or fewer.');
   if (cost === null || price === null) return bad(res, 'Enter valid cost and selling prices.');
   if (stock === null || threshold === null) return bad(res, 'Stock and threshold must be whole numbers, 0 or more.');
   if (expiry === undefined) return bad(res, 'Expiration date must be a valid date (YYYY-MM-DD).');
+  if (sizeInput.size === undefined) return bad(res, 'Size value and unit must be provided together, with a valid positive value and supported unit.');
 
   let category;
   if (requestedCategory) {
@@ -959,15 +1021,22 @@ api.post('/products', loadAccount, requireOwner, wrap(async (req, res) => {
     category = await autoCategoryForProduct(name, barcode);
   }
 
+  const size = sizeInput.size;
   const { rows: [r] } = await db.query(
-    `INSERT INTO products (barcode, name, category, cost_price, price, stock, low_stock_threshold, expiry_date)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+    `INSERT INTO products (barcode, name, category, cost_price, price, stock, low_stock_threshold, expiry_date,
+                           size_value, size_unit, size_label)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
      ON CONFLICT (barcode) DO UPDATE SET
        name = EXCLUDED.name, category = EXCLUDED.category, cost_price = EXCLUDED.cost_price, price = EXCLUDED.price,
        stock = products.stock + EXCLUDED.stock, low_stock_threshold = EXCLUDED.low_stock_threshold,
-       expiry_date = COALESCE(EXCLUDED.expiry_date, products.expiry_date), updated_at = now()
+       expiry_date = COALESCE(EXCLUDED.expiry_date, products.expiry_date),
+       size_value = COALESCE(EXCLUDED.size_value, products.size_value),
+       size_unit = COALESCE(EXCLUDED.size_unit, products.size_unit),
+       size_label = COALESCE(EXCLUDED.size_label, products.size_label),
+       updated_at = now()
      RETURNING id, (xmax = 0) AS inserted`,
-    [barcode, name, category, cost, price, stock, threshold, expiry]
+    [barcode, name, category, cost, price, stock, threshold, expiry,
+      size ? size.value : null, size ? size.unit : null, size ? size.label : null]
   );
   if (stock !== 0) {
     await db.query(
@@ -981,6 +1050,7 @@ api.post('/products', loadAccount, requireOwner, wrap(async (req, res) => {
 api.put('/products/:id', loadAccount, requireOwner, wrap(async (req, res) => {
   await ensureAlertSchema();
   await ensureCategorySchema();
+  await ensureSizeSchema();
   const id = number(req.params.id, { min: 1, int: true });
   const b = req.body;
   const name = text(b.name, 150);
@@ -997,6 +1067,7 @@ api.put('/products/:id', loadAccount, requireOwner, wrap(async (req, res) => {
   }
   // Optional conflict guard for offline-queued edits: the stock the editor saw.
   const baseStock = (b.base_stock === undefined || b.base_stock === null || b.base_stock === '') ? undefined : number(b.base_stock, { max: 1e6, int: true });
+  const sizeInput = submittedSize(b);
   if (!id) return bad(res, 'Product not found.', 404);
   if (!name) return bad(res, 'Product name is required.');
   if (suppliedCategory && !requestedCategory) return bad(res, 'Category must be 60 characters or fewer.');
@@ -1006,10 +1077,12 @@ api.put('/products/:id', loadAccount, requireOwner, wrap(async (req, res) => {
   if (b.base_stock !== undefined && b.base_stock !== null && b.base_stock !== '' && baseStock === null) {
     return bad(res, 'Base stock is invalid.');
   }
+  if (sizeInput.size === undefined) return bad(res, 'Size value and unit must be provided together, with a valid positive value and supported unit.');
 
   const found = await db.tx(async (c) => {
     const { rows: [old] } = await c.query(
       `SELECT stock, cost_price::float8 AS cost_price, category,
+              size_value::float8 AS size_value, size_unit, size_label,
               to_char(expiry_date, 'YYYY-MM-DD') AS expiry_date
        FROM products WHERE id = $1 FOR UPDATE`,
       [id]
@@ -1026,11 +1099,18 @@ api.put('/products/:id', loadAccount, requireOwner, wrap(async (req, res) => {
       }
       if (row) nextCategory = row.name;
     }
+    const nextSize = sizeInput.provided
+      ? sizeInput.size
+      : old.size_label
+        ? { value: old.size_value, unit: old.size_unit, label: old.size_label }
+        : null;
     await c.query(
       `UPDATE products SET name=$1, price=$2, stock=$3, low_stock_threshold=$4, cost_price=$5, category=$6,
-              expiry_date=$7, updated_at=now() WHERE id=$8`,
+              expiry_date=$7, size_value=$8, size_unit=$9, size_label=$10, updated_at=now() WHERE id=$11`,
       [name, price, stock, threshold, cost === undefined ? old.cost_price : cost, nextCategory,
-        expiry === undefined ? old.expiry_date : expiry, id]
+        expiry === undefined ? old.expiry_date : expiry,
+        nextSize ? nextSize.value : null, nextSize ? nextSize.unit : null,
+        nextSize ? nextSize.label : null, id]
     );
     if (stock !== old.stock) {
       await c.query(
@@ -1065,6 +1145,7 @@ api.delete('/products/:id', loadAccount, requireOwner, wrap(async (req, res) => 
 // cost and thresholds are stripped — see publicProduct).
 api.get('/lookup', wrap(async (req, res) => {
   await ensureAlertSchema();
+  await ensureSizeSchema();
   const code = text(req.query.code, 64);
   if (!code) return bad(res, 'Enter a barcode.');
   const { rows: [p] } = await db.query(
@@ -1085,6 +1166,7 @@ api.get('/lookup', wrap(async (req, res) => {
 // syncs with the same key return the original sale instead of duplicating it.
 api.post('/checkout', wrap(async (req, res) => {
   await ensureAlertSchema();
+  await ensureSizeSchema();
   const b = req.body;
   const raw = Array.isArray(b.items) ? b.items : [];
   if (!raw.length || raw.length > 100) return bad(res, 'The cart is empty.');
@@ -1117,7 +1199,7 @@ api.post('/checkout', wrap(async (req, res) => {
     result = await db.tx(async (c) => {
       const ids = [...qtyById.keys()];
       const { rows } = await c.query(
-        `SELECT id, name, price::float8 AS price, cost_price::float8 AS cost, stock,
+        `SELECT id, name, size_label, price::float8 AS price, cost_price::float8 AS cost, stock,
                 to_char(expiry_date, 'YYYY-MM-DD') AS expiry_date,
                 (expiry_date IS NOT NULL AND expiry_date < (now() AT TIME ZONE $2)::date) AS expired
          FROM products WHERE id = ANY($1::int[]) ORDER BY id FOR UPDATE`,
@@ -1151,8 +1233,8 @@ api.post('/checkout', wrap(async (req, res) => {
       for (const p of rows) {
         const qty = qtyById.get(p.id);
         await c.query(
-          'INSERT INTO sale_items (sale_id, product_id, product_name, quantity, price, subtotal) VALUES ($1,$2,$3,$4,$5,$6)',
-          [sale.id, p.id, p.name, qty, p.price, money(cents(p.price) * qty)]
+          'INSERT INTO sale_items (sale_id, product_id, product_name, size_label, quantity, price, subtotal) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+          [sale.id, p.id, p.name, p.size_label || null, qty, p.price, money(cents(p.price) * qty)]
         );
         await c.query('UPDATE products SET stock = stock - $1, updated_at = now() WHERE id = $2', [qty, p.id]);
         await c.query(
@@ -1174,7 +1256,8 @@ api.post('/checkout', wrap(async (req, res) => {
     }
     if (e.code === '42703') {
       await ensureOfflineColumns();
-      return bad(res, 'Database was just migrated for offline sync. Please retry this sale (it is safe — duplicates are blocked).', 409);
+      await ensureSizeSchema();
+      return bad(res, 'Database was just migrated. Please retry this sale (it is safe — duplicates are blocked).', 409);
     }
     throw e;
   }
@@ -1191,12 +1274,14 @@ function salesFilter(query) {
   return {
     clause: `($1::date IS NULL OR (s.sale_date AT TIME ZONE $3)::date = $1::date)
              AND ($2::text IS NULL OR s.transaction_id ILIKE $2
-                  OR EXISTS (SELECT 1 FROM sale_items si WHERE si.sale_id = s.id AND si.product_name ILIKE $2))`,
+                  OR EXISTS (SELECT 1 FROM sale_items si WHERE si.sale_id = s.id
+                             AND (si.product_name ILIKE $2 OR si.size_label ILIKE $2)))`,
     params: [date, search ? likePattern(search) : null, tz()]
   };
 }
 
 api.get('/report', loadAccount, requireOwner, wrap(async (req, res) => {
+  await ensureSizeSchema();
   const f = salesFilter(req.query);
   const period = ['today', 'week', 'month'].includes(String(req.query.period || '')) ? req.query.period : 'all';
   // Reuses $3 (store time zone) from salesFilter — no extra params needed.
@@ -1211,7 +1296,7 @@ api.get('/report', loadAccount, requireOwner, wrap(async (req, res) => {
   const [stats, chart, best, sales, summary, byCategory, hourly, topProducts, categoryLeaders, allCategories] = await Promise.all([
     periodStats(),
     chart7(),
-    db.query(`SELECT product_name, SUM(quantity)::int AS total_qty FROM sale_items GROUP BY product_name ORDER BY total_qty DESC LIMIT 1`),
+    db.query(`SELECT product_name, size_label, SUM(quantity)::int AS total_qty FROM sale_items GROUP BY product_name, size_label ORDER BY total_qty DESC, product_name ASC LIMIT 1`),
     db.query(
       `SELECT s.id, s.transaction_id, s.sale_date, s.total_amount::float8 AS total_amount, s.profit::float8 AS profit, s.payment_method
        FROM sales s WHERE ${where} ORDER BY s.sale_date DESC LIMIT 500`,
@@ -1236,24 +1321,24 @@ api.get('/report', loadAccount, requireOwner, wrap(async (req, res) => {
       f.params
     ),
     db.query(
-      `SELECT si.product_name, SUM(si.quantity)::int AS qty, SUM(si.subtotal)::float8 AS revenue
+      `SELECT si.product_name, si.size_label, SUM(si.quantity)::int AS qty, SUM(si.subtotal)::float8 AS revenue
        FROM sale_items si JOIN sales s ON s.id = si.sale_id
-       WHERE ${where} GROUP BY 1 ORDER BY qty DESC, revenue DESC, 1 ASC LIMIT 5`,
+       WHERE ${where} GROUP BY 1, 2 ORDER BY qty DESC, revenue DESC, 1 ASC, 2 ASC LIMIT 5`,
       f.params
     ),
     // Best seller in EVERY category for the selected period. Ties are broken
     // deterministically (quantity, then revenue, then name) so results are
     // fair and stable instead of arbitrary.
     db.query(
-      `SELECT category, product_name, qty, revenue FROM (
-         SELECT COALESCE(p.category,'General') AS category, si.product_name,
+      `SELECT category, product_name, size_label, qty, revenue FROM (
+         SELECT COALESCE(p.category,'General') AS category, si.product_name, si.size_label,
                 SUM(si.quantity)::int AS qty, SUM(si.subtotal)::float8 AS revenue,
                 ROW_NUMBER() OVER (
                   PARTITION BY COALESCE(p.category,'General')
-                  ORDER BY SUM(si.quantity) DESC, SUM(si.subtotal) DESC, si.product_name ASC
+                  ORDER BY SUM(si.quantity) DESC, SUM(si.subtotal) DESC, si.product_name ASC, si.size_label ASC
                 ) AS rn
          FROM sale_items si JOIN sales s ON s.id = si.sale_id LEFT JOIN products p ON p.id = si.product_id
-         WHERE ${where} GROUP BY 1, 2
+         WHERE ${where} GROUP BY 1, 2, 3
        ) t WHERE rn = 1 ORDER BY qty DESC, category ASC`,
       f.params
     ),
@@ -1275,6 +1360,7 @@ api.get('/report', loadAccount, requireOwner, wrap(async (req, res) => {
 }));
 
 api.get('/sales/:id', wrap(async (req, res) => {
+  await ensureSizeSchema();
   const id = number(req.params.id, { min: 1, int: true });
   if (!id) return bad(res, 'Receipt not found.', 404);
   const { rows: [sale] } = await db.query(
@@ -1291,7 +1377,7 @@ api.get('/sales/:id', wrap(async (req, res) => {
     delete sale.profit;
   }
   const { rows: items } = await db.query(
-    'SELECT product_name, quantity, price::float8 AS price, subtotal::float8 AS subtotal FROM sale_items WHERE sale_id = $1 ORDER BY id',
+    'SELECT product_name, size_label, quantity, price::float8 AS price, subtotal::float8 AS subtotal FROM sale_items WHERE sale_id = $1 ORDER BY id',
     [id]
   );
   res.json({ sale, items, store: process.env.STORE_NAME || 'SmartMart' });
@@ -1305,17 +1391,18 @@ const csvCell = (v) => {
 };
 
 api.get('/export-sales', loadAccount, requireOwner, wrap(async (req, res) => {
+  await ensureSizeSchema();
   const f = salesFilter(req.query);
   const { rows } = await db.query(
-    `SELECT s.transaction_id, s.sale_date, si.product_name, si.quantity, si.price::float8 AS price, si.subtotal::float8 AS subtotal
+    `SELECT s.transaction_id, s.sale_date, si.product_name, si.size_label, si.quantity, si.price::float8 AS price, si.subtotal::float8 AS subtotal
      FROM sales s JOIN sale_items si ON si.sale_id = s.id
      WHERE ${f.clause} ORDER BY s.id DESC, si.id ASC`,
     f.params
   );
-  const head = ['Transaction No', 'Sale Date', 'Item Name', 'Quantity', 'Unit Price', 'Subtotal'];
+  const head = ['Transaction No', 'Sale Date', 'Item Name', 'Size / Volume', 'Quantity', 'Unit Price', 'Subtotal'];
   const lines = [head.map(csvCell).join(',')];
   for (const r of rows) {
-    lines.push([r.transaction_id, r.sale_date, r.product_name, r.quantity, r.price.toFixed(2), r.subtotal.toFixed(2)].map(csvCell).join(','));
+    lines.push([r.transaction_id, r.sale_date, r.product_name, r.size_label || 'Size not specified', r.quantity, r.price.toFixed(2), r.subtotal.toFixed(2)].map(csvCell).join(','));
   }
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="sales_report_${new Date().toISOString().slice(0, 10)}.csv"`);

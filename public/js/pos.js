@@ -21,7 +21,7 @@
     '<div class="offline-banner" id="offBanner" hidden></div>' +
     '<div class="bill">' +
     '<div class="panel pad"><div class="ph"><h2>' + (isCashier ? 'Select items' : 'Select inventory items') + '</h2><span class="mono mute" id="count"></span></div>' +
-    '<div class="toolbar"><input id="q" type="search" placeholder="Search by name, barcode or category" aria-label="Search items"><select id="catFilter" class="cat-select" aria-label="Filter by category"><option value="">All categories</option></select></div>' +
+    '<div class="toolbar"><input id="q" type="search" placeholder="Search by name, barcode, size or category" aria-label="Search items"><select id="catFilter" class="cat-select" aria-label="Filter by category"><option value="">All categories</option></select></div>' +
     '<div class="toolbar" style="margin-bottom:6px"><input id="scan" style="flex:1 1 220px;max-width:380px" placeholder="Scan barcode, then press Enter" autocomplete="off" aria-label="Barcode"><button class="btn" id="scanBtn" type="button">Add</button></div>' +
     '<div class="mono mute" id="scanMsg" style="min-height:1.5em;margin-bottom:10px;font-size:12px"></div>' +
     '<div id="catalog" class="products"></div></div>' +
@@ -116,7 +116,7 @@
     var q = search.toLowerCase();
     var list = products.filter(function (p) {
       if (categoryFilter && String(p.category).toLowerCase() !== categoryFilter.toLowerCase()) return false;
-      return !q || String(p.name).toLowerCase().indexOf(q) > -1 || String(p.barcode).toLowerCase().indexOf(q) > -1 || String(p.category).toLowerCase().indexOf(q) > -1;
+      return !q || String(p.name).toLowerCase().indexOf(q) > -1 || String(p.barcode).toLowerCase().indexOf(q) > -1 || String(p.category).toLowerCase().indexOf(q) > -1 || String(p.size_label || '').toLowerCase().indexOf(q) > -1;
     });
     el.count.textContent = products.length + ' items' + (offlineMode ? ' (cached)' : '');
     el.catalog.innerHTML = list.length ? list.map(function (p) {
@@ -133,6 +133,7 @@
       return '<button class="pc' + (expired ? ' expired' : '') + '" type="button" data-id="' + p.id + '"' +
         (left <= 0 || expired ? ' disabled' : '') + ' title="' + esc(expired ? 'Expired ' + A.fmtDate(p.expiry_date) : '') + '">' +
         '<span class="hx">' + esc(initials) + '</span><span class="nm">' + esc(p.name) + '</span>' +
+        '<span class="pc-size">' + esc(A.sizeText(p)) + '</span>' +
         '<span class="pr">' + money(p.price) + '</span>' +
         '<span class="st">' + esc(st) + '</span></button>';
     }).join('') : '<div class="empty" style="grid-column:1/-1">No items match.</div>';
@@ -142,7 +143,7 @@
     el.lines.innerHTML = cart.length ? cart.map(function (l) {
       var p = byId(l.id);
       if (!p) return '';
-      return '<div class="line"><div class="ln"><b>' + esc(p.name) + '</b><span class="mono mute" style="font-size:12px">' + money(p.price) + ' ea</span></div>' +
+      return '<div class="line"><div class="ln"><b>' + esc(p.name) + '</b><span class="line-size">' + esc(A.sizeText(p)) + '</span><span class="mono mute" style="font-size:12px">' + money(p.price) + ' ea</span></div>' +
         '<div class="qty"><button type="button" data-act="dec" data-id="' + p.id + '" aria-label="Decrease quantity">−</button><span class="mono">' + l.qty + '</span><button type="button" data-act="inc" data-id="' + p.id + '" aria-label="Increase quantity">+</button></div>' +
         '<div class="mono lt">' + money(p.price * l.qty) + '</div>' +
         '<button class="x" type="button" data-act="rm" data-id="' + p.id + '" aria-label="Remove ' + esc(p.name) + '">×</button></div>';
@@ -280,7 +281,7 @@
       var r = await A.api('/lookup?code=' + encodeURIComponent(code));
       var p = byId(r.product.id);
       if (!p) { products.push(r.product); paintCategoryFilter(); }
-      else { p.stock = r.product.stock; p.price = r.product.price; }
+      else { p.stock = r.product.stock; p.price = r.product.price; p.size_value = r.product.size_value; p.size_unit = r.product.size_unit; p.size_label = r.product.size_label; }
       if (add(r.product.id)) { say('Added: ' + r.product.name + ' (' + r.product.barcode + ')', true); beep(true); }
     } catch (e) {
       if (netErr(e)) {
@@ -298,7 +299,7 @@
   function snapshot() {
     return cart.map(function (l) {
       var p = byId(l.id);
-      return { id: l.id, qty: l.qty, name: p ? p.name : '', price: p ? p.price : 0, barcode: p ? p.barcode : '' };
+      return { id: l.id, qty: l.qty, name: p ? p.name : '', price: p ? p.price : 0, barcode: p ? p.barcode : '', size_label: p ? (p.size_label || null) : null };
     });
   }
 
