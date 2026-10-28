@@ -62,7 +62,7 @@ const dateOnly = (v) => {
   if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== s) return undefined;
   return s;
 };
-const PRODUCT_COLS = `id, barcode, name, category, size_value::float8 AS size_value, size_unit, size_label, cost_price::float8 AS cost_price, price::float8 AS price, stock, low_stock_threshold, to_char(expiry_date, 'YYYY-MM-DD') AS expiry_date`;
+const PRODUCT_COLS = `id, barcode, name, category, size_value::float8 AS size_value, size_unit, size_label, cost_price::float8 AS cost_price, price::float8 AS price, stock, low_stock_threshold, to_char(expiry_date, 'YYYY-MM-DD') AS expiry_date, image_url`;
 const FALLBACK_CATEGORY = categories.FALLBACK_CATEGORY;
 const CATEGORY_COLS = 'id, name, active, created_at, updated_at';
 // Cashiers get POS only — no inventory management. Cost, thresholds and
@@ -215,6 +215,38 @@ function ensureSizeSchema() {
   return sizeSchemaMigration;
 }
 ensureSizeSchema();
+
+// Product image/logo support (additive, nullable).
+let imageSchemaMigration = null;
+function ensureImageSchema() {
+  if (!imageSchemaMigration) {
+    imageSchemaMigration = (async () => {
+      try {
+        await db.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_url VARCHAR(512)');
+      } catch (e) {
+        console.error('image schema migration deferred:', e.message);
+        imageSchemaMigration = null;
+      }
+    })();
+  }
+  return imageSchemaMigration;
+}
+ensureImageSchema();
+
+function isSafeImageUrl(val) {
+  if (val === null || val === undefined || val === '') return null;
+  if (typeof val !== 'string') return undefined;
+  const v = val.trim();
+  if (v === '') return null;
+  if (v.length > 512) return undefined;
+  try {
+    const u = new URL(v);
+    if (u.protocol === 'http:' || u.protocol === 'https:') return v;
+    return undefined;
+  } catch (e) {
+    return undefined;
+  }
+}
 
 function submittedSize(body) {
   const provided = body.size_value !== undefined || body.size_unit !== undefined || body.size_label !== undefined;
@@ -1005,6 +1037,10 @@ api.post('/products', loadAccount, requireOwner, wrap(async (req, res) => {
   const threshold = number(b.low_stock_threshold, { max: 1e6, int: true });
   const expiry = b.expiry_date === undefined ? null : dateOnly(b.expiry_date);
   const sizeInput = submittedSize(b);
+  await ensureImageSchema();
+  const imgCheck = isSafeImageUrl(b.image_url);
+  if (imgCheck === undefined) return bad(res, 'Image URL must be a valid http or https URL (max 512 characters).');
+  const imageUrl = imgCheck;
   if (!barcode || !name) return bad(res, 'Barcode and item name are required.');
   if (suppliedCategory && !requestedCategory) return bad(res, 'Category must be 60 characters or fewer.');
   if (cost === null || price === null) return bad(res, 'Enter valid cost and selling prices.');
@@ -1024,8 +1060,8 @@ api.post('/products', loadAccount, requireOwner, wrap(async (req, res) => {
   const size = sizeInput.size;
   const { rows: [r] } = await db.query(
     `INSERT INTO products (barcode, name, category, cost_price, price, stock, low_stock_threshold, expiry_date,
-                           size_value, size_unit, size_label)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+                           size_value, size_unit, size_label, image_url)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
      ON CONFLICT (barcode) DO UPDATE SET
        name = EXCLUDED.name, category = EXCLUDED.category, cost_price = EXCLUDED.cost_price, price = EXCLUDED.price,
        stock = products.stock + EXCLUDED.stock, low_stock_threshold = EXCLUDED.low_stock_threshold,
@@ -1033,10 +1069,11 @@ api.post('/products', loadAccount, requireOwner, wrap(async (req, res) => {
        size_value = COALESCE(EXCLUDED.size_value, products.size_value),
        size_unit = COALESCE(EXCLUDED.size_unit, products.size_unit),
        size_label = COALESCE(EXCLUDED.size_label, products.size_label),
+       image_url = COALESCE(EXCLUDED.image_url, products.image_url),
        updated_at = now()
      RETURNING id, (xmax = 0) AS inserted`,
     [barcode, name, category, cost, price, stock, threshold, expiry,
-      size ? size.value : null, size ? size.unit : null, size ? size.label : null]
+      size ? size.value : null, size ? size.unit : null, size ? size.label : null, imageUrl]
   );
   if (stock !== 0) {
     await db.query(
@@ -1068,6 +1105,10 @@ api.put('/products/:id', loadAccount, requireOwner, wrap(async (req, res) => {
   // Optional conflict guard for offline-queued edits: the stock the editor saw.
   const baseStock = (b.base_stock === undefined || b.base_stock === null || b.base_stock === '') ? undefined : number(b.base_stock, { max: 1e6, int: true });
   const sizeInput = submittedSize(b);
+  await ensureImageSchema();
+  const imgCheck = isSafeImageUrl(b.image_url);
+  if (imgCheck === undefined) return bad(res, 'Image URL must be a valid http or https URL (max 512 characters).');
+  const imageUrl = imgCheck;
   if (!id) return bad(res, 'Product not found.', 404);
   if (!name) return bad(res, 'Product name is required.');
   if (suppliedCategory && !requestedCategory) return bad(res, 'Category must be 60 characters or fewer.');
@@ -1106,11 +1147,11 @@ api.put('/products/:id', loadAccount, requireOwner, wrap(async (req, res) => {
         : null;
     await c.query(
       `UPDATE products SET name=$1, price=$2, stock=$3, low_stock_threshold=$4, cost_price=$5, category=$6,
-              expiry_date=$7, size_value=$8, size_unit=$9, size_label=$10, updated_at=now() WHERE id=$11`,
+              expiry_date=$7, size_value=$8, size_unit=$9, size_label=$10, image_url=$11, updated_at=now() WHERE id=$12`,
       [name, price, stock, threshold, cost === undefined ? old.cost_price : cost, nextCategory,
         expiry === undefined ? old.expiry_date : expiry,
         nextSize ? nextSize.value : null, nextSize ? nextSize.unit : null,
-        nextSize ? nextSize.label : null, id]
+        nextSize ? nextSize.label : null, imageUrl, id]
     );
     if (stock !== old.stock) {
       await c.query(

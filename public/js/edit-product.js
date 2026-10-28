@@ -45,6 +45,8 @@
     '<div class="row2"><label for="stock">Stock quantity<input id="stock" type="number" step="1" min="0" required value="' + p.stock + '"></label>' +
     '<label for="threshold">Low stock threshold<input id="threshold" type="number" step="1" min="0" required value="' + p.low_stock_threshold + '"></label></div>' +
     '<label for="expiry">Expiry date (optional)<input id="expiry" type="date" value="' + esc(p.expiry_date || '') + '"></label>' +
+    '<label for="imageUrl">Image URL (optional)<input id="imageUrl" type="url" maxlength="512" placeholder="https://example.com/product.jpg" value="' + esc(p.image_url || '') + '"></label>' +
+    '<div class="note">Leave blank to clear. Only http/https URLs allowed (max 512 characters).</div>' +
     '<div class="note">Leave blank to remove the expiry date. Expired stock is blocked at POS and highlighted in Inventory.</div>' +
     '<div class="alert" id="err" hidden></div>' +
     '<button class="btn primary wide" id="save" type="submit">Update inventory item</button>' +
@@ -173,11 +175,13 @@
       return;
     }
     btn.disabled = true;
+    var imgEl = A.$('#imageUrl');
     var fields = {
       name: A.$('#name').value, category: A.$('#category').value, cost_price: A.$('#cost').value,
       price: A.$('#price').value, stock: A.$('#stock').value, low_stock_threshold: A.$('#threshold').value,
       expiry_date: A.$('#expiry').value || null,
-      size_value: sizeInput.value, size_unit: sizeInput.unit, size_label: sizeInput.label
+      size_value: sizeInput.value, size_unit: sizeInput.unit, size_label: sizeInput.label,
+      image_url: imgEl ? imgEl.value : ''
     };
     // Offline (or lost connection): queue an adjust op with base_stock for conflict safety.
     if (!A.isOnline()) {
@@ -188,7 +192,8 @@
           name: fields.name, category: fields.category, cost_price: fields.cost_price,
           price: fields.price, stock: Number(fields.stock), low_stock_threshold: Number(fields.low_stock_threshold),
           expiry_date: fields.expiry_date, base_stock: p.stock,
-          size_value: fields.size_value, size_unit: fields.size_unit, size_label: fields.size_label
+          size_value: fields.size_value, size_unit: fields.size_unit, size_label: fields.size_label,
+          image_url: fields.image_url || null
         });
         A.toast('Saved offline — will sync when online.');
         location.href = '/inventory';
@@ -202,7 +207,7 @@
     try {
       await A.api('/products/' + id, {
         method: 'PUT',
-        body: Object.assign({}, fields, { base_stock: p.stock })
+        body: Object.assign({}, fields, { base_stock: p.stock, image_url: fields.image_url })
       });
       if (window.StockAlerts) { try { window.StockAlerts.notifyChanged(); } catch (x) {} }
       location.href = '/inventory';
@@ -215,7 +220,8 @@
             name: fields.name, category: fields.category, cost_price: fields.cost_price,
             price: fields.price, stock: Number(fields.stock), low_stock_threshold: Number(fields.low_stock_threshold),
             expiry_date: fields.expiry_date, base_stock: p.stock,
-            size_value: fields.size_value, size_unit: fields.size_unit, size_label: fields.size_label
+            size_value: fields.size_value, size_unit: fields.size_unit, size_label: fields.size_label,
+            image_url: fields.image_url || null
           });
           A.toast('Connection lost — change queued for sync.', true);
           location.href = '/inventory';

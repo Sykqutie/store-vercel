@@ -1,0 +1,11 @@
+﻿const fs = require('fs');
+let s = fs.readFileSync('public/js/pos.js','utf8');
+if(!s.includes('pc-img')) {
+  const oldInit = \"      var initials = String(p.name).split(/\\s+/).slice(0, 2).map(function (w) { return w[0]; }).join('').toUpperCase();\\n      // Cashiers see availability only — never exact stock numbers.\\n      var st = expired ? 'EXPIRED — not sellable'\\n        : p.stock <= 0 ? 'Out of stock'\\n        : isCashier ? 'Available'\\n        : left + ' left';\";
+  const newInit = \"      var initials = String(p.name).split(/\\s+/).slice(0, 2).map(function (w) { return w[0]; }).join('').toUpperCase();\\n      var img = p.image_url ? ('<img class=\"pc-img\" src=\"' + esc(p.image_url) + '\" alt=\"' + esc(p.name) + '\">') : ('<span class=\"hx\">' + esc(initials) + '</span>');\\n      // Cashiers see availability only — never exact stock numbers.\\n      var st = expired ? 'EXPIRED — not sellable'\\n        : p.stock <= 0 ? 'Out of stock'\\n        : isCashier ? 'Available'\\n        : left + ' left';\";
+  if(s.includes(oldInit)) s = s.replace(oldInit, newInit);
+  const oldCard = \"      return '<button class=\"pc' + (expired ? ' expired' : '') + '\" type=\"button\" data-id=\"' + p.id + '\"' +\\n        (left <= 0 || expired ? ' disabled' : '') + ' title=\"' + esc(expired ? 'Expired ' + A.fmtDate(p.expiry_date) : '') + '\">' +\\n        '<span class=\"hx\">' + esc(initials) + '</span><span class=\"nm\">' + esc(p.name) + '</span>' +\\n        '<span class=\"pc-size\">' + esc(A.sizeText(p)) + '</span>' +\\n        '<span class=\"pr\">' + money(p.price) + '</span>' +\\n        '<span class=\"st\">' + esc(st) + '</span></button>';\";
+  const newCard = \"      return '<button class=\"pc' + (expired ? ' expired' : '') + '\" type=\"button\" data-id=\"' + p.id + '\"' +\\n        (left <= 0 || expired ? ' disabled' : '') + ' title=\"' + esc(expired ? 'Expired ' + A.fmtDate(p.expiry_date) : '') + '\">' +\\n        img + '<span class=\"nm\">' + esc(p.name) + '</span>' +\\n        '<span class=\"pc-size\">' + esc(A.sizeText(p)) + '</span>' +\\n        '<span class=\"pr\">' + money(p.price) + '</span>' +\\n        '<span class=\"st\">' + esc(st) + '</span></button>';\";
+  if(s.includes(oldCard)) s = s.replace(oldCard, newCard);
+}
+fs.writeFileSync('public/js/pos.js', s, 'utf8');

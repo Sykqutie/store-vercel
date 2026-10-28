@@ -27,8 +27,7 @@ CREATE TABLE IF NOT EXISTS products (
   low_stock_threshold  INT           NOT NULL DEFAULT 5,
   expiry_date          DATE,
   created_at           TIMESTAMPTZ   NOT NULL DEFAULT now(),
-  updated_at           TIMESTAMPTZ   NOT NULL DEFAULT now()
-);
+  updated_at           TIMESTAMPTZ   NOT NULL DEFAULT now(),\r\n  image_url            VARCHAR(512)\r\n);
 CREATE INDEX IF NOT EXISTS idx_products_name     ON products (name);
 CREATE INDEX IF NOT EXISTS idx_products_category ON products (category);
 CREATE INDEX IF NOT EXISTS idx_products_stock    ON products (stock);
