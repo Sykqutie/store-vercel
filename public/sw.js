@@ -1,7 +1,7 @@
 /* Convenience Store POS service worker: offline-first app shell, network-only API. */
 'use strict';
 
-var CACHE = 'store-pos-v23';
+var CACHE = 'store-pos-v24';
 var RUNTIME = 'store-pos-rt-v23';
 
 // Bump this list when shell files change.

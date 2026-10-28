@@ -14,7 +14,7 @@
     '<div class="pw"><label for="password">Password<input id="password" name="password" type="password" autocomplete="current-password" required></label>' +
     '<button type="button" class="btn sm" id="showPw" aria-label="Show password">Show</button></div>' +
     '<div class="alert" id="err" hidden></div>' +
-    '<button class="btn primary wide" id="go" type="submit">Launch dashboard</button></form>' +
+    '<button class="btn primary wide" id="go" type="submit">Log In</button></form>' +
     '<div style="text-align:center;margin-top:10px"><a href="/forgot-password">Forgot Password?</a></div>' +
     '</div></div>';
 
