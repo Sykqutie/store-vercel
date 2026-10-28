@@ -13,7 +13,7 @@
     });
   }
   function money(n) {
-    return 'â‚±' + Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return '\u20B1' + Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
   function sizeText(p) {
     var label = p && p.size_label;
@@ -35,9 +35,9 @@
   }
   function fmtDate(dateStr) {
     var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateStr || ''));
-    if (!m) return 'â€”';
+    if (!m) return 'ƒâu{20B1}š�â‚��';
     var d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
-    if (isNaN(d.getTime())) return 'â€”';
+    if (isNaN(d.getTime())) return 'ƒâu{20B1}š�â‚��';
     return d.toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' });
   }
   function qs(name) { return new URLSearchParams(location.search).get(name); }
@@ -160,8 +160,8 @@
   // so the caller can re-enable its button and show the message.
   function doLogout(onFail) {
     if (!isOnline()) {
-      toast('You are offline â€” log out needs a connection.');
-      if (onFail) onFail('You are offline â€” reconnect, then try again. Your current session is still active.');
+      toast('You are offline ƒâu{20B1}š�â‚�� log out needs a connection.');
+      if (onFail) onFail('You are offline ƒâu{20B1}š�â‚�� reconnect, then try again. Your current session is still active.');
       return;
     }
     api('/logout', { method: 'POST', noRedirect: true }).then(function () {
@@ -190,7 +190,7 @@
         root.innerHTML =
           '<div class="auth-wrap"><div class="panel auth">' +
           '<h1>OFF<span style="color:var(--cyan)">LINE</span></h1>' +
-          '<p>You are offline and no saved session was found on this device. Reconnect and sign in once â€” afterwards the app opens offline.</p>' +
+          '<p>You are offline and no saved session was found on this device. Reconnect and sign in once ƒâu{20B1}š�â‚�� afterwards the app opens offline.</p>' +
           '<div class="btn-row" style="justify-content:center"><a class="btn primary" href="/login">Go to login</a></div>' +
           '</div></div>';
         return null;
@@ -249,7 +249,7 @@
       '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>' +
       '<div class="profile-menu" id="profileMenu" role="menu" aria-label="Account" hidden>' +
       '<div class="profile-head"><span class="avatar lg">' + initial + '</span>' +
-      '<div><b>' + esc(me.username) + (offline ? ' Â· offline' : '') + '</b><span class="sub">' + esc(String(me.store || 'SmartMart')) + '</span>' +
+      '<div><b>' + esc(me.username) + (offline ? ' ƒâu{20B1}š‚� offline' : '') + '</b><span class="sub">' + esc(String(me.store || 'SmartMart')) + '</span>' +
       '<span class="pill tier">' + role + '</span></div></div>' +
       '<button class="btn wide" id="logoutBtn" type="button">Log out</button></div></span>' +
       '<span class="pill t2" id="syncBadge" hidden></span>' +
