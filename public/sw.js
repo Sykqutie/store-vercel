@@ -1,8 +1,8 @@
 /* Convenience Store POS service worker: offline-first app shell, network-only API. */
 'use strict';
 
-var CACHE = 'store-pos-v24';
-var RUNTIME = 'store-pos-rt-v23';
+var CACHE = 'store-pos-v25';
+var RUNTIME = 'store-pos-rt-v24';
 
 // Bump this list when shell files change.
 var PRECACHE = [
@@ -37,11 +37,11 @@ var PRECACHE = [
   '/html/backup.html',
   '/html/offline.html',
   '/css/base.css',
-  '/css/base.css?v=20261027',
+  '/css/base.css?v=20261029',
   '/css/app.css',
-  '/css/app.css?v=20261027',
+  '/css/app.css?v=20261029',
   '/js/common.js',
-  '/js/common.js?v=20261027',
+  '/js/common.js?v=20261029',
   '/js/idb.js',
   '/js/sync.js',
   '/js/pwa.js',
