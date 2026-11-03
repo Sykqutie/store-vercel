@@ -41,6 +41,9 @@
     return d.toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' });
   }
   function qs(name) { return new URLSearchParams(location.search).get(name); }
+  function productIcon(category, name, small) {
+    return window.ProductIcons ? window.ProductIcons.html(category, name, { small: !!small }) : '';
+  }
 
   function isOnline() {
     return typeof navigator === 'undefined' ? true : navigator.onLine !== false;
@@ -323,5 +326,5 @@
     return document.getElementById('main');
   }
 
-  window.App = { $: $, esc: esc, money: money, sizeText: sizeText, fmtDT: fmtDT, fmtDate: fmtDate, daysUntil: daysUntil, qs: qs, api: api, toast: toast, countTo: countTo, reveal: reveal, mountShell: mountShell, root: root, isOnline: isOnline, noteRefreshed: noteRefreshed, me: session };
+  window.App = { $: $, esc: esc, money: money, sizeText: sizeText, fmtDT: fmtDT, fmtDate: fmtDate, daysUntil: daysUntil, qs: qs, productIcon: productIcon, api: api, toast: toast, countTo: countTo, reveal: reveal, mountShell: mountShell, root: root, isOnline: isOnline, noteRefreshed: noteRefreshed, me: session };
 })();

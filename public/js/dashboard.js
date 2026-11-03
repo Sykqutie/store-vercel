@@ -184,7 +184,9 @@
 
   var topHtml = d.top.length
     ? d.top.map(function (t) {
-        return '<div class="li"><span class="t"><b>' + esc(t.product_name) + '</b><span class="sub">' + esc(A.sizeText(t)) + '</span></span><span class="pill tier">' + t.qty + ' sold</span></div>';
+        return '<div class="li"><div class="t prod-cell">' + A.productIcon('', t.product_name, true) +
+          '<div><b>' + esc(t.product_name) + '</b><span class="sub">' + esc(A.sizeText(t)) + '</span></div></div>' +
+          '<span class="pill tier">' + t.qty + ' sold</span></div>';
       }).join('')
     : '<div class="empty">No sales yet. Run your first transaction in POS.</div>';
 

@@ -122,8 +122,7 @@
     el.catalog.innerHTML = list.length ? list.map(function (p) {
       var left = p.stock - cartQty(p.id);
       var expired = isExpired(p);
-      var initials = String(p.name).split(/\s+/).slice(0, 2).map(function (w) { return w[0]; }).join('').toUpperCase();
-      var img = p.image_url ? ('<img class="pc-img" src="' + esc(p.image_url) + '" alt="' + esc(p.name) + '" onerror="this.style.display=&quot;none&quot;">' ) : ('<span class="hx">' + esc(initials) + '</span>');
+      var icon = A.productIcon(p.category, p.name);
       // Cashiers see availability only — never exact stock numbers.
       var st = expired ? 'EXPIRED — not sellable'
         : p.stock <= 0 ? 'Out of stock'
@@ -133,7 +132,7 @@
       else if (!expired && !isCashier && offlineMode && p.stock > 0) st += ' · cached';
       return '<button class="pc' + (expired ? ' expired' : '') + '" type="button" data-id="' + p.id + '"' +
         (left <= 0 || expired ? ' disabled' : '') + ' title="' + esc(expired ? 'Expired ' + A.fmtDate(p.expiry_date) : '') + '">' +
-        img + '<span class=\"nm\">' + esc(p.name) + '</span>' +
+        icon + '<span class=\"nm\">' + esc(p.name) + '</span>' +
         '<span class="pc-size">' + esc(A.sizeText(p)) + '</span>' +
         '<span class="pr">' + money(p.price) + '</span>' +
         '<span class="st">' + esc(st) + '</span></button>';

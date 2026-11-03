@@ -1106,9 +1106,10 @@ api.put('/products/:id', loadAccount, requireOwner, wrap(async (req, res) => {
   const baseStock = (b.base_stock === undefined || b.base_stock === null || b.base_stock === '') ? undefined : number(b.base_stock, { max: 1e6, int: true });
   const sizeInput = submittedSize(b);
   await ensureImageSchema();
-  const imgCheck = isSafeImageUrl(b.image_url);
+  const imageProvided = b.image_url !== undefined;
+  const imgCheck = imageProvided ? isSafeImageUrl(b.image_url) : null;
   if (imgCheck === undefined) return bad(res, 'Image URL must be a valid http or https URL (max 512 characters).');
-  const imageUrl = imgCheck;
+  const imageUrl = imageProvided ? imgCheck : undefined;
   if (!id) return bad(res, 'Product not found.', 404);
   if (!name) return bad(res, 'Product name is required.');
   if (suppliedCategory && !requestedCategory) return bad(res, 'Category must be 60 characters or fewer.');
@@ -1147,11 +1148,12 @@ api.put('/products/:id', loadAccount, requireOwner, wrap(async (req, res) => {
         : null;
     await c.query(
       `UPDATE products SET name=$1, price=$2, stock=$3, low_stock_threshold=$4, cost_price=$5, category=$6,
-              expiry_date=$7, size_value=$8, size_unit=$9, size_label=$10, image_url=$11, updated_at=now() WHERE id=$12`,
+              expiry_date=$7, size_value=$8, size_unit=$9, size_label=$10,
+              image_url=CASE WHEN $11::boolean THEN $12 ELSE image_url END, updated_at=now() WHERE id=$13`,
       [name, price, stock, threshold, cost === undefined ? old.cost_price : cost, nextCategory,
         expiry === undefined ? old.expiry_date : expiry,
         nextSize ? nextSize.value : null, nextSize ? nextSize.unit : null,
-        nextSize ? nextSize.label : null, imageUrl, id]
+        nextSize ? nextSize.label : null, imageProvided, imageUrl, id]
     );
     if (stock !== old.stock) {
       await c.query(

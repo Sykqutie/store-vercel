@@ -30,6 +30,7 @@
     '<div class="bc-preview"><span class="bc"><svg id="bcSvg" data-code="' + esc(p.barcode) + '" role="img" aria-label="Barcode ' + esc(p.barcode) + '"></svg></span>' +
     '<div class="bc-meta"><span class="mono mute">Scannable at POS · CODE128</span><button class="btn sm" id="printBc" type="button">Print label</button></div></div>' +
     '<form id="f" class="stack">' +
+    '<div class="icon-preview" id="iconPreview" aria-live="polite"></div>' +
     '<label for="name">Item name<input id="name" maxlength="150" required value="' + esc(p.name) + '"></label>' +
     '<label for="category">Category<span class="bc-row"><input id="category" maxlength="60" list="categoryOptions" autocomplete="off" required value="' + esc(p.category) + '"><button class="btn sm" id="suggestCat" type="button">Suggest</button></span><datalist id="categoryOptions"></datalist></label>' +
     '<div class="note" id="catHint">The saved category is never changed automatically. Use Suggest only when you want a new recommendation.</div>' +
@@ -45,12 +46,23 @@
     '<div class="row2"><label for="stock">Stock quantity<input id="stock" type="number" step="1" min="0" required value="' + p.stock + '"></label>' +
     '<label for="threshold">Low stock threshold<input id="threshold" type="number" step="1" min="0" required value="' + p.low_stock_threshold + '"></label></div>' +
     '<label for="expiry">Expiry date (optional)<input id="expiry" type="date" value="' + esc(p.expiry_date || '') + '"></label>' +
-    '<label for="imageUrl">Image URL (optional)<input id="imageUrl" type="url" maxlength="512" placeholder="https://example.com/product.jpg" value="' + esc(p.image_url || '') + '"></label>' +
-    '<div class="note">Leave blank to clear. Only http/https URLs allowed (max 512 characters).</div>' +
+    '<div class="note">Item icons are assigned automatically from the name and category. No image upload is needed.</div>' +
     '<div class="note">Leave blank to remove the expiry date. Expired stock is blocked at POS and highlighted in Inventory.</div>' +
     '<div class="alert" id="err" hidden></div>' +
     '<button class="btn primary wide" id="save" type="submit">Update inventory item</button>' +
     '<a class="btn wide" href="/inventory" style="text-align:center">Cancel</a></form></div>';
+
+  function paintPreview() {
+    var box = A.$('#iconPreview');
+    if (!box) return;
+    var name = A.$('#name').value.trim();
+    var category = A.$('#category').value.trim();
+    var size = A.$('#sizeLabel').value.trim() || String(p.size_label || '').trim();
+    var meta = [category, size].filter(Boolean).join(' · ');
+    box.innerHTML = A.productIcon(category, name) +
+      '<div class="ip-meta"><b>' + esc(name || p.name) + '</b>' +
+      '<span>' + esc(meta || 'Icon chosen automatically from the name and category.') + '</span></div>';
+  }
 
   try {
     if (window.JsBarcode) {
@@ -79,10 +91,12 @@
     return '<option value="' + esc(name) + '"></option>';
   }).join('');
 
+  A.$('#name').addEventListener('input', paintPreview);
   A.$('#category').addEventListener('input', function () {
     A.$('#catHint').textContent = this.value.trim()
       ? 'Manual category. The saved category is only changed when you save.'
       : 'Required. Ask the owner to choose or reactivate a category.';
+    paintPreview();
   });
   A.$('#suggestCat').addEventListener('click', async function () {
     var btn = this;
@@ -94,6 +108,7 @@
       var r = await A.api('/categories/suggest?name=' + encodeURIComponent(name));
       if (r && r.suggestion) {
         A.$('#category').value = r.suggestion;
+        paintPreview();
         A.$('#catHint').textContent = r.source === 'keyword'
           ? 'Suggested from the item name. Review it before saving.'
           : 'No keyword match, so Uncategorized is suggested.';
@@ -110,6 +125,7 @@
         A.$('#sizeLabel').value = '';
       }
       A.$('#sizeHint').textContent = 'Manual size. The saved size is only changed when you save.';
+      paintPreview();
     });
   });
   function readSizeFields() {
@@ -139,6 +155,7 @@
         A.$('#sizeValue').value = r.suggestion.value;
         A.$('#sizeUnit').value = r.suggestion.unit;
         A.$('#sizeLabel').value = r.suggestion.label;
+        paintPreview();
         A.$('#sizeHint').textContent = 'Suggested from the item name. Review it before saving.';
       } else {
         A.$('#sizeHint').textContent = 'No explicit size found. Enter one only if the package shows it.';
@@ -175,13 +192,11 @@
       return;
     }
     btn.disabled = true;
-    var imgEl = A.$('#imageUrl');
     var fields = {
       name: A.$('#name').value, category: A.$('#category').value, cost_price: A.$('#cost').value,
       price: A.$('#price').value, stock: A.$('#stock').value, low_stock_threshold: A.$('#threshold').value,
       expiry_date: A.$('#expiry').value || null,
-      size_value: sizeInput.value, size_unit: sizeInput.unit, size_label: sizeInput.label,
-      image_url: imgEl ? imgEl.value : ''
+      size_value: sizeInput.value, size_unit: sizeInput.unit, size_label: sizeInput.label
     };
     // Offline (or lost connection): queue an adjust op with base_stock for conflict safety.
     if (!A.isOnline()) {
@@ -192,8 +207,7 @@
           name: fields.name, category: fields.category, cost_price: fields.cost_price,
           price: fields.price, stock: Number(fields.stock), low_stock_threshold: Number(fields.low_stock_threshold),
           expiry_date: fields.expiry_date, base_stock: p.stock,
-          size_value: fields.size_value, size_unit: fields.size_unit, size_label: fields.size_label,
-          image_url: fields.image_url || null
+          size_value: fields.size_value, size_unit: fields.size_unit, size_label: fields.size_label
         });
         A.toast('Saved offline — will sync when online.');
         location.href = '/inventory';
@@ -207,7 +221,7 @@
     try {
       await A.api('/products/' + id, {
         method: 'PUT',
-        body: Object.assign({}, fields, { base_stock: p.stock, image_url: fields.image_url })
+        body: Object.assign({}, fields, { base_stock: p.stock })
       });
       if (window.StockAlerts) { try { window.StockAlerts.notifyChanged(); } catch (x) {} }
       location.href = '/inventory';
@@ -220,8 +234,7 @@
             name: fields.name, category: fields.category, cost_price: fields.cost_price,
             price: fields.price, stock: Number(fields.stock), low_stock_threshold: Number(fields.low_stock_threshold),
             expiry_date: fields.expiry_date, base_stock: p.stock,
-            size_value: fields.size_value, size_unit: fields.size_unit, size_label: fields.size_label,
-            image_url: fields.image_url || null
+            size_value: fields.size_value, size_unit: fields.size_unit, size_label: fields.size_label
           });
           A.toast('Connection lost — change queued for sync.', true);
           location.href = '/inventory';
@@ -233,5 +246,6 @@
       btn.disabled = false;
     }
   });
+  paintPreview();
   A.reveal(main);
 })();

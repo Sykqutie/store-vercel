@@ -27,6 +27,7 @@
     '<div class="two">' +
     '<div class="panel pad"><div class="ph"><h2>Add / restock inventory item</h2></div>' +
     '<form id="f" class="stack">' +
+    '<div class="icon-preview" id="iconPreview" aria-live="polite"></div>' +
     '<label for="barcode">Barcode<span class="bc-row"><input id="barcode" maxlength="64" required style="flex:1;min-width:0"><button class="btn sm" id="gen" type="button" title="Generate a scannable barcode">Generate</button></span></label>' +
     '<label for="name">Item name<input id="name" maxlength="150" required></label>' +
     '<label for="category">Category<input id="category" maxlength="60" list="categoryOptions" autocomplete="off" placeholder="Leave blank to auto-categorize"><datalist id="categoryOptions"></datalist></label>' +
@@ -40,8 +41,7 @@
     '<div class="row2"><label for="stock">Quantity to add<input id="stock" type="number" step="1" min="0" required></label>' +
     '<label for="threshold">Low stock alert at<input id="threshold" type="number" step="1" min="0" value="5" required></label></div>' +
     '<label for="expiry">Expiry date (optional)<input id="expiry" type="date"></label>' +
-    '<label for="imageUrl">Image URL (optional)<input id="imageUrl" type="url" maxlength="512" placeholder="https://example.com/product.jpg"></label>' +
-    '<div class="note">Leave blank to clear. Only http/https URLs allowed (max 512 characters).</div>' +
+    '<div class="note">Item icons are assigned automatically from the name and category. No image upload is needed.</div>' +
     '<div class="note">Saving an existing barcode adds the quantity to its stock and updates the details. Leave expiry blank for items without a printed date.</div>' +
     '<div class="alert" id="err" hidden></div>' +
     '<button class="btn primary wide" id="save" type="submit">Save inventory item</button></form>' +
@@ -57,6 +57,18 @@
 
   var body = A.$('#body'), err = A.$('#err');
   var banner = A.$('#offBanner'), queueList = A.$('#queueList'), queueMeta = A.$('#queueMeta');
+
+  function paintPreview() {
+    var box = A.$('#iconPreview');
+    if (!box) return;
+    var name = A.$('#name').value.trim();
+    var category = A.$('#category').value.trim();
+    var size = A.$('#sizeLabel').value.trim();
+    var meta = [category, size].filter(Boolean).join(' · ');
+    box.innerHTML = A.productIcon(category, name) +
+      '<div class="ip-meta"><b>' + esc(name || 'New inventory item') + '</b>' +
+      '<span>' + esc(meta || 'Icon chosen automatically from the name and category.') + '</span></div>';
+  }
 
   var netErr = function (e) { return /Failed to fetch|NetworkError|network|offline|Load failed/i.test(String((e && e.message) || e)); };
 
@@ -133,6 +145,7 @@
     clearTimeout(suggestTimer);
     A.$('#category').value = '';
     setCategoryHint('Leave blank to auto-categorize. Suggestions never replace a category you type.');
+    paintPreview();
   }
 
   function scheduleSuggestion() {
@@ -154,6 +167,7 @@
       A.api('/categories/suggest?name=' + encodeURIComponent(name) + '&barcode=' + encodeURIComponent(barcode)).then(function (r) {
         if (seq !== suggestSeq || categoryTouched || !r || !r.suggestion) return;
         A.$('#category').value = r.suggestion;
+        paintPreview();
         setCategoryHint(r.source === 'existing'
           ? 'Existing barcode category. You can change it before saving.'
           : r.source === 'keyword'
@@ -172,6 +186,7 @@
     A.$('#sizeValue').value = size ? size.value : '';
     A.$('#sizeUnit').value = size ? size.unit : '';
     A.$('#sizeLabel').value = size ? size.label : '';
+    paintPreview();
   }
 
   function resetSizeField() {
@@ -364,7 +379,7 @@
       var warnRow = p.stock <= 0 || low || (days != null && days <= 7);
       return '<tr class="' + (warnRow ? 'row-low' : '') + '"><td><span class="bc"><svg class="jsbarcode" data-code="' + esc(p.barcode) + '" role="img" aria-label="Barcode ' + esc(p.barcode) + '"></svg></span>' +
         '<span class="mono mute" style="font-size:11px">' + esc(p.barcode) + '</span></td>' +
-        '<td><b>' + esc(p.name) + '</b><span class="sub">' + esc(p.category) + ' · ' + esc(A.sizeText(p)) + '</span></td>' +
+        '<td><div class="prod-cell">' + A.productIcon(p.category, p.name, true) + '<div><b>' + esc(p.name) + '</b><span class="sub">' + esc(p.category) + ' · ' + esc(A.sizeText(p)) + '</span></div></div></td>' +
         '<td class="n mono mute">' + money(p.cost_price) + '</td><td class="n mono">' + money(p.price) + '</td>' +
         '<td class="mono"><b>' + p.stock + '</b></td><td>' + expiryCell(p) + '</td>' +
         '<td>' + statusPills(p) + '</td>' +
@@ -468,7 +483,7 @@
     categoryFilter = this.value;
     render();
   });
-  A.$('#name').addEventListener('input', function () { scheduleSuggestion(); scheduleSizeSuggestion(); });
+  A.$('#name').addEventListener('input', function () { scheduleSuggestion(); scheduleSizeSuggestion(); paintPreview(); });
   A.$('#barcode').addEventListener('input', function () { scheduleSuggestion(); scheduleSizeSuggestion(); });
   A.$('#category').addEventListener('input', function () {
     categoryTouched = this.value.trim() !== '';
@@ -478,6 +493,7 @@
       setCategoryHint('Leave blank to auto-categorize. Suggestions never replace a category you type.');
       scheduleSuggestion();
     }
+    paintPreview();
   });
   ['sizeValue', 'sizeUnit', 'sizeLabel'].forEach(function (id) {
     A.$('#' + id).addEventListener('input', function () {
@@ -486,6 +502,7 @@
         A.$('#sizeLabel').value = '';
       }
       setSizeHint('Manual size. Automatic suggestions will not replace it.');
+      paintPreview();
     });
   });
   var genBtn = A.$('#gen');
@@ -568,22 +585,19 @@
       return;
     }
     btn.disabled = true;
-    var imageUrlEl = A.$('#imageUrl');
     var fields = {
       barcode: A.$('#barcode').value, name: A.$('#name').value, category: A.$('#category').value,
       cost_price: A.$('#cost').value, price: A.$('#price').value,
       stock: A.$('#stock').value, threshold: A.$('#threshold').value,
       expiry_date: A.$('#expiry').value,
-      size_value: sizeInput.value, size_unit: sizeInput.unit, size_label: sizeInput.label,
-      image_url: imageUrlEl ? imageUrlEl.value : ''
+      size_value: sizeInput.value, size_unit: sizeInput.unit, size_label: sizeInput.label
     };
     var offlinePayload = {
       barcode: fields.barcode, name: fields.name, category: fields.category,
       cost_price: fields.cost_price, price: fields.price,
       stock: Number(fields.stock || 0), low_stock_threshold: Number(fields.threshold || 5),
       expiry_date: fields.expiry_date || null,
-      size_value: fields.size_value, size_unit: fields.size_unit, size_label: fields.size_label,
-      image_url: fields.image_url || null
+      size_value: fields.size_value, size_unit: fields.size_unit, size_label: fields.size_label
     };
     try {
       if (!A.isOnline()) {
@@ -602,8 +616,7 @@
               cost_price: fields.cost_price, price: fields.price,
               stock: fields.stock, low_stock_threshold: fields.threshold,
               expiry_date: fields.expiry_date || null,
-              size_value: fields.size_value, size_unit: fields.size_unit, size_label: fields.size_label,
-              image_url: fields.image_url || null
+              size_value: fields.size_value, size_unit: fields.size_unit, size_label: fields.size_label
             }
           });
           A.toast(r.created ? 'Inventory item added' : 'Inventory item restocked');
@@ -682,6 +695,7 @@
 
   chips();
   paintBanner();
+  paintPreview();
   try {
     await load();
   } catch (e) {

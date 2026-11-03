@@ -216,7 +216,8 @@
     A.$('#topMeta').textContent = tops.length ? 'Top ' + tops.length + ' by units' : '';
     A.$('#topList').innerHTML = tops.length ? tops.map(function (t, i) {
       var medal = i === 0 ? 'g' : i === 1 ? 's' : i === 2 ? 'b' : '';
-      return '<div class="li"><span class="t rank"><span class="rank-n ' + medal + '">' + (i + 1) + '</span><b>' + esc(t.product_name) + ' · ' + esc(A.sizeText(t)) + '</b></span>' +
+      return '<div class="li"><span class="t rank"><span class="rank-n ' + medal + '">' + (i + 1) + '</span>' +
+        A.productIcon('', t.product_name, true) + '<b>' + esc(t.product_name) + ' · ' + esc(A.sizeText(t)) + '</b></span>' +
         '<span class="pill tier">' + t.qty + ' sold · ' + money(t.revenue) + '</span></div>';
     }).join('') : '<div class="empty">No sales yet in this period.</div>';
 
@@ -232,8 +233,7 @@
       if (!l) {
         return '<div class="lead none"><span class="sub">' + esc(c) + '</span><span class="empty" style="padding:6px 0">No sales yet</span></div>';
       }
-      var initials = String(l.product_name).split(/\s+/).slice(0, 2).map(function (w) { return w[0]; }).join('').toUpperCase();
-      return '<div class="lead"><span class="hx">' + esc(initials) + '</span>' +
+      return '<div class="lead">' + A.productIcon(c, l.product_name, true) +
         '<div class="lead-body"><span class="sub">' + esc(c) + '</span><b>' + esc(l.product_name) + '</b>' +
         '<span class="sub">' + esc(A.sizeText(l)) + ' · ' + l.qty + ' sold · ' + money(l.revenue) + '</span></div>' +
         '<span class="pill tier">Top</span></div>';

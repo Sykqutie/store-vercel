@@ -1,8 +1,8 @@
 /* Convenience Store POS service worker: offline-first app shell, network-only API. */
 'use strict';
 
-var CACHE = 'store-pos-v25';
-var RUNTIME = 'store-pos-rt-v24';
+var CACHE = 'store-pos-v28';
+var RUNTIME = 'store-pos-rt-v28';
 
 // Bump this list when shell files change.
 var PRECACHE = [
@@ -37,28 +37,35 @@ var PRECACHE = [
   '/html/backup.html',
   '/html/offline.html',
   '/css/base.css',
-  '/css/base.css?v=20261029',
+  '/css/base.css?v=20261103',
   '/css/app.css',
-  '/css/app.css?v=20261029',
+  '/css/app.css?v=20261103',
   '/js/common.js',
-  '/js/common.js?v=20261029',
+  '/js/common.js?v=20261103',
+  '/js/product-icons.js',
+  '/js/product-icons.js?v=20261103',
   '/js/idb.js',
   '/js/sync.js',
   '/js/pwa.js',
-  '/js/pwa.js?v=20261027',
+  '/js/pwa.js?v=20261103',
   '/js/alerts.js',
   '/js/cart.js',
   '/js/index.js',
   '/js/login.js',
-  '/js/login.js?v=20261027',
+  '/js/login.js?v=20261103',
   '/js/install.js',
   '/js/forgot-password.js',
   '/js/dashboard.js',
+  '/js/dashboard.js?v=20261103',
   '/js/pos.js',
+  '/js/pos.js?v=20261103',
   '/js/products.js',
+  '/js/products.js?v=20261103',
   '/js/edit-product.js',
+  '/js/edit-product.js?v=20261103',
   '/js/categories.js',
   '/js/report.js',
+  '/js/report.js?v=20261103',
   '/js/receipt.js',
   '/js/users.js',
   '/js/backup.js',
