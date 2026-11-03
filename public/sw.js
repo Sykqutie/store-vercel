@@ -1,8 +1,8 @@
 /* Convenience Store POS service worker: offline-first app shell, network-only API. */
 'use strict';
 
-var CACHE = 'store-pos-v28';
-var RUNTIME = 'store-pos-rt-v28';
+var CACHE = 'store-pos-v29';
+var RUNTIME = 'store-pos-rt-v29';
 
 // Bump this list when shell files change.
 var PRECACHE = [
@@ -47,12 +47,12 @@ var PRECACHE = [
   '/js/idb.js',
   '/js/sync.js',
   '/js/pwa.js',
-  '/js/pwa.js?v=20261103',
+  '/js/pwa.js?v=20261104',
   '/js/alerts.js',
   '/js/cart.js',
   '/js/index.js',
   '/js/login.js',
-  '/js/login.js?v=20261103',
+  '/js/login.js?v=20261104',
   '/js/install.js',
   '/js/forgot-password.js',
   '/js/dashboard.js',
@@ -82,11 +82,12 @@ var PRECACHE = [
 self.addEventListener('install', function (event) {
   event.waitUntil(
     caches.open(CACHE).then(function (cache) {
-      return cache.addAll(PRECACHE);
+      // Cache entries independently: one missing file must not leave the whole
+      // app shell uncached (cache.addAll is atomic and would discard everything).
+      return Promise.all(PRECACHE.map(function (url) {
+        return cache.add(url).catch(function () { return null; });
+      }));
     }).then(function () {
-      return self.skipWaiting();
-    }).catch(function () {
-      // Offline-first is best-effort: an uncached file must not block install.
       return self.skipWaiting();
     })
   );

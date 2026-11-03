@@ -16,6 +16,7 @@
     '<div class="alert" id="err" hidden></div>' +
     '<button class="btn primary wide" id="go" type="submit">Log In</button></form>' +
     '<div style="text-align:center;margin-top:10px"><a href="/forgot-password">Forgot Password?</a></div>' +
+    '<div style="text-align:center;margin-top:8px"><button class="btn sm" type="button" data-pwa-install hidden>Install App</button></div>' +
     '</div></div>';
 
   var form = A.$('#f'), err = A.$('#err');
