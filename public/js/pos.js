@@ -12,6 +12,7 @@
   var categoryFilter = '';
   var VAT = 12;        // prices include VAT; shown for information only (the server computes the real values)
   var offlineMode = !A.isOnline();
+  var checkoutBusy = false;
   // Cashiers are POS-only: they can sell but never see inventory numbers
   // (exact stock counts, thresholds, costs). Owners keep the full detail.
   // Fail closed: unknown roles are treated as cashier.
@@ -304,7 +305,9 @@
   }
 
   async function checkoutOffline(items, tender, clientId) {
+    checkoutBusy = true;
     if (!window.Sync) {
+      checkoutBusy = false;
       el.err.textContent = 'You are offline and offline sales are unavailable in this browser.';
       el.err.hidden = false;
       el.charge.disabled = false;
@@ -313,9 +316,9 @@
     // Prevent negative stock against the cached levels.
     for (var i = 0; i < items.length; i++) {
       var p = byId(items[i].id);
-      if (!p) { el.err.textContent = 'An item in the cart is no longer available.'; el.err.hidden = false; el.charge.disabled = false; return; }
-      if (isExpired(p)) { el.err.textContent = expiredText(p) + ' Remove it from the cart.'; el.err.hidden = false; el.charge.disabled = false; return; }
-      if (items[i].qty > p.stock) { el.err.textContent = isCashier ? 'Not enough stock available for ' + p.name + '.' : 'Only ' + p.stock + ' of ' + p.name + ' in cached stock.'; el.err.hidden = false; el.charge.disabled = false; return; }
+      if (!p) { checkoutBusy = false; el.err.textContent = 'An item in the cart is no longer available.'; el.err.hidden = false; el.charge.disabled = false; return; }
+      if (isExpired(p)) { checkoutBusy = false; el.err.textContent = expiredText(p) + ' Remove it from the cart.'; el.err.hidden = false; el.charge.disabled = false; return; }
+      if (items[i].qty > p.stock) { checkoutBusy = false; el.err.textContent = isCashier ? 'Not enough stock available for ' + p.name + '.' : 'Only ' + p.stock + ' of ' + p.name + ' in cached stock.'; el.err.hidden = false; el.charge.disabled = false; return; }
     }
     try {
       var sale = await window.Sync.queueSale({ items: items, amount_tendered: tender, client_sale_id: clientId });
@@ -339,6 +342,7 @@
       A.toast('Saved offline — will sync when online.');
       location.href = '/receipt?local=' + encodeURIComponent(sale.client_sale_id);
     } catch (e) {
+      checkoutBusy = false;
       el.err.textContent = e.message;
       el.err.hidden = false;
       el.charge.disabled = false;
@@ -367,6 +371,7 @@
       el.charge.disabled = false;
       return;
     }
+    checkoutBusy = true;
     var clientId = window.LocalDB ? window.LocalDB.uuid('sale') : ('sale_' + Date.now().toString(36));
     if (!A.isOnline()) {
       await checkoutOffline(items, tender, clientId);
@@ -408,6 +413,7 @@
         await checkoutOffline(items, tender, clientId);
         return;
       }
+      checkoutBusy = false;
       // Never leak exact stock numbers to cashiers (server messages carry them).
       var msg = String((e && e.message) || 'Checkout failed.');
       if (isCashier) msg = msg.replace(/Only \d+ of .*? left in stock\./, 'Not enough stock available for an item in the cart.');
@@ -484,6 +490,12 @@
   window.addEventListener('pageshow', function (e) { if (e.persisted) location.reload(); });
   window.addEventListener('sync-changed', function () { renderPending(); });
   window.addEventListener('app-refresh', function () { load().then(function () { A.noteRefreshed(); }).catch(function () { A.noteRefreshed(); }); });
+
+  window.POSState = {
+    hasItems: function () { return cart.length > 0; },
+    isBusy: function () { return checkoutBusy; },
+    hasActiveSale: function () { return checkoutBusy || cart.length > 0; }
+  };
 
   paintBanner();
   try { await load(); }

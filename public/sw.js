@@ -1,8 +1,8 @@
 /* Convenience Store POS service worker: offline-first app shell, network-only API. */
 'use strict';
 
-var CACHE = 'store-pos-v29';
-var RUNTIME = 'store-pos-rt-v29';
+var CACHE = 'store-pos-v30';
+var RUNTIME = 'store-pos-rt-v30';
 
 // Bump this list when shell files change.
 var PRECACHE = [
@@ -47,7 +47,7 @@ var PRECACHE = [
   '/js/idb.js',
   '/js/sync.js',
   '/js/pwa.js',
-  '/js/pwa.js?v=20261104',
+  '/js/pwa.js?v=20261105',
   '/js/alerts.js',
   '/js/cart.js',
   '/js/index.js',
@@ -58,7 +58,7 @@ var PRECACHE = [
   '/js/dashboard.js',
   '/js/dashboard.js?v=20261103',
   '/js/pos.js',
-  '/js/pos.js?v=20261103',
+  '/js/pos.js?v=20261105',
   '/js/products.js',
   '/js/products.js?v=20261103',
   '/js/edit-product.js',
@@ -87,8 +87,6 @@ self.addEventListener('install', function (event) {
       return Promise.all(PRECACHE.map(function (url) {
         return cache.add(url).catch(function () { return null; });
       }));
-    }).then(function () {
-      return self.skipWaiting();
     })
   );
 });
@@ -104,6 +102,12 @@ self.addEventListener('activate', function (event) {
       return self.clients.claim();
     })
   );
+});
+
+self.addEventListener('message', function (event) {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
 
 function isApi(url) {

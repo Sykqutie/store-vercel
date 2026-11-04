@@ -4,6 +4,14 @@
 
   var deferredPrompt = null;
   var installedThisSession = false;
+  var registration = null;
+  var waitingWorker = null;
+  var updateNotice = null;
+  var lastUpdateCheck = 0;
+  var lastOnlineCheck = 0;
+  var updateCheckInterval = 60 * 1000;
+  var reloading = false;
+  var reloaded = false;
 
   function statusEls() {
     return {
@@ -149,6 +157,169 @@
     observer.observe(document.body, { childList: true, subtree: true });
   }
 
+  function cartHasItems() {
+    if (window.CartStore && typeof window.CartStore.load === 'function') {
+      try { return window.CartStore.load().length > 0; } catch (e) { return false; }
+    }
+    try {
+      var raw = localStorage.getItem('cstore_cart_v1');
+      if (!raw) return false;
+      var cart = JSON.parse(raw);
+      return Array.isArray(cart) && cart.length > 0;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function isPosPage() {
+    var path = location.pathname;
+    return path === '/pos' || path === '/cashier' || path === '/html/pos.html';
+  }
+
+  function isSafeToReload() {
+    if (window.POSState && typeof window.POSState.hasActiveSale === 'function') {
+      try { if (window.POSState.hasActiveSale()) return false; } catch (e) { /* ignore */ }
+    }
+    if (isPosPage() && cartHasItems()) return false;
+    return true;
+  }
+
+  function updateNoticeEls() {
+    if (!updateNotice) return null;
+    return {
+      button: updateNotice.querySelector('#pwaUpdateNow'),
+      note: updateNotice.querySelector('#pwaUpdateNote')
+    };
+  }
+
+  function ensureUpdateNotice() {
+    if (updateNotice && document.body && document.body.contains(updateNotice)) return updateNotice;
+    if (!document.body) return null;
+    var el = document.createElement('div');
+    el.id = 'pwaUpdateNotice';
+    el.className = 'panel';
+    el.setAttribute('role', 'alert');
+    el.setAttribute('aria-live', 'polite');
+    el.hidden = true;
+    el.style.cssText = 'position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:45;width:min(540px,calc(100vw - 24px));display:none;gap:12px 16px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:14px 16px;text-align:left;background:var(--panel-solid);border:1px solid var(--cyan);box-shadow:0 20px 60px rgba(0,0,0,.55),0 0 30px rgba(32,217,245,.18)';
+    el.innerHTML =
+      '<div style="display:flex;flex-direction:column;gap:3px;min-width:0;flex:1 1 240px">' +
+      '<b style="font-family:var(--font-d);font-size:14px;letter-spacing:.02em">SmartMart update available</b>' +
+      '<span style="font-size:12px;line-height:1.4;color:var(--mute)">A new version is ready. Reload SmartMart to apply the update.</span>' +
+      '<span id="pwaUpdateNote" style="font-size:12px;line-height:1.4;color:var(--warn)" hidden></span>' +
+      '</div>' +
+      '<button class="btn primary" id="pwaUpdateNow" type="button">UPDATE NOW</button>';
+    document.body.appendChild(el);
+    updateNotice = el;
+    var btn = el.querySelector('#pwaUpdateNow');
+    if (btn) btn.addEventListener('click', applyUpdate);
+    return el;
+  }
+
+  function paintUpdateNote() {
+    var els = updateNoticeEls();
+    if (!els || !els.note || !updateNotice || updateNotice.hidden) return;
+    if (isSafeToReload()) {
+      els.note.textContent = '';
+      els.note.hidden = true;
+    } else {
+      els.note.textContent = 'Finish or clear the current sale before updating.';
+      els.note.hidden = false;
+    }
+  }
+
+  function showUpdateNotice(worker) {
+    waitingWorker = worker || (registration && registration.waiting) || null;
+    var el = ensureUpdateNotice();
+    if (!el) return;
+    el.hidden = false;
+    el.style.display = 'flex';
+    var els = updateNoticeEls();
+    if (els.button && !reloading) {
+      els.button.disabled = false;
+      els.button.textContent = 'UPDATE NOW';
+    }
+    paintUpdateNote();
+  }
+
+  function hideUpdateNotice() {
+    if (!updateNotice) return;
+    updateNotice.hidden = true;
+    updateNotice.style.display = 'none';
+  }
+
+  function onControllerChange() {
+    if (!reloading) {
+      waitingWorker = null;
+      hideUpdateNotice();
+      return;
+    }
+    if (reloaded) return;
+    reloaded = true;
+    window.location.reload();
+  }
+
+  function applyUpdate() {
+    if (reloading) return;
+    if (!isSafeToReload()) {
+      paintUpdateNote();
+      return;
+    }
+    var worker = waitingWorker || (registration && registration.waiting);
+    if (!worker) {
+      hideUpdateNotice();
+      return;
+    }
+    reloading = true;
+    reloaded = false;
+    var els = updateNoticeEls();
+    if (els.button) {
+      els.button.disabled = true;
+      els.button.textContent = 'UPDATING...';
+    }
+    if (els.note) {
+      els.note.textContent = '';
+      els.note.hidden = true;
+    }
+    try {
+      worker.postMessage({ type: 'SKIP_WAITING' });
+    } catch (e) {
+      reloading = false;
+      if (els.button) {
+        els.button.disabled = false;
+        els.button.textContent = 'UPDATE NOW';
+      }
+      if (els.note) {
+        els.note.textContent = 'Could not apply the update. Try reloading the page.';
+        els.note.hidden = false;
+      }
+    }
+  }
+
+  function handleWaitingWorker(worker) {
+    if (!worker || !navigator.serviceWorker.controller) return;
+    showUpdateNotice(worker);
+  }
+
+  function checkForUpdate(force) {
+    if (!registration || typeof registration.update !== 'function' || !navigator.onLine) {
+      return Promise.resolve(false);
+    }
+    var now = Date.now();
+    if (!force && now - lastUpdateCheck < updateCheckInterval) return Promise.resolve(false);
+    lastUpdateCheck = now;
+    try {
+      return registration.update().then(function () {
+        if (registration.waiting && navigator.serviceWorker.controller) {
+          handleWaitingWorker(registration.waiting);
+        }
+        return true;
+      }).catch(function () { return false; });
+    } catch (e) {
+      return Promise.resolve(false);
+    }
+  }
+
   function promptInstall() {
     if (!deferredPrompt) {
       showInstallHelp();
@@ -176,7 +347,6 @@
 
   function registerSW() {
     if (!('serviceWorker' in navigator)) return;
-    var registration;
     try {
       // Register immediately: waiting for window.load delays offline caching and
       // can prevent beforeinstallprompt from firing on slow or blocked fonts.
@@ -185,25 +355,47 @@
       return;
     }
     registration.then(function (reg) {
-      // Check for updates when the page becomes visible.
-      document.addEventListener('visibilitychange', function () {
-        if (!document.hidden && reg && typeof reg.update === 'function') {
-          try { reg.update(); } catch (e) { /* ignore */ }
-        }
-      });
+      registration = reg;
+      if (reg.waiting && navigator.serviceWorker.controller) handleWaitingWorker(reg.waiting);
       if (reg && reg.addEventListener) {
-        reg.addEventListener('updatefound', function () { /* new SW will activate on next load */ });
+        reg.addEventListener('updatefound', function () {
+          var worker = reg.installing;
+          if (!worker || !worker.addEventListener) return;
+          worker.addEventListener('statechange', function () {
+            if (worker.state === 'installed' && navigator.serviceWorker.controller) {
+              handleWaitingWorker(worker);
+            }
+          });
+        });
       }
+      // Throttled checks when the app is opened, focused, or reconnects.
+      document.addEventListener('visibilitychange', function () {
+        if (!document.hidden) checkForUpdate(false);
+      });
       if (navigator.serviceWorker.ready) {
-        navigator.serviceWorker.ready.then(function () { paintInstall(); }).catch(function () { /* ignore */ });
+        navigator.serviceWorker.ready.then(function () {
+          paintInstall();
+          checkForUpdate(true);
+        }).catch(function () { /* ignore */ });
       }
     }).catch(function () { /* offline-first is best-effort */ });
   }
 
   function init() {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('controllerchange', onControllerChange);
+    }
     registerSW();
-    window.addEventListener('online', paintOnline);
+    window.addEventListener('online', function () {
+      paintOnline();
+      var now = Date.now();
+      if (now - lastOnlineCheck > 10000) {
+        lastOnlineCheck = now;
+        checkForUpdate(true);
+      }
+    });
     window.addEventListener('offline', paintOnline);
+    window.addEventListener('cart-changed', paintUpdateNote);
     window.addEventListener('beforeinstallprompt', function (e) {
       e.preventDefault();
       deferredPrompt = e;
