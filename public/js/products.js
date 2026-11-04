@@ -38,7 +38,7 @@
     '<div class="note" id="sizeHint" aria-live="polite">Size is optional. Suggestions never replace size you enter.</div>' +
     '<div class="row2"><label for="cost">Cost price (₱)<input id="cost" type="number" step="0.01" min="0" required></label>' +
     '<label for="price">Selling price (₱)<input id="price" type="number" step="0.01" min="0" required></label></div>' +
-    '<div class="row2"><label for="stock">Quantity to add<input id="stock" type="number" step="1" min="0" required></label>' +
+    '<div class="row2"><label for="stock">Quantity to add<input id="stock" type="number" step="1" min="0" max="1000000" inputmode="numeric" autocomplete="off" required></label>' +
     '<label for="threshold">Low stock alert at<input id="threshold" type="number" step="1" min="0" value="5" required></label></div>' +
     '<label for="expiry">Expiry date (optional)<input id="expiry" type="date"></label>' +
     '<div class="note">Item icons are assigned automatically from the name and category. No image upload is needed.</div>' +
@@ -71,6 +71,51 @@
   }
 
   var netErr = function (e) { return /Failed to fetch|NetworkError|network|offline|Load failed/i.test(String((e && e.message) || e)); };
+
+  var stockInput = A.$('#stock');
+  var stockErrShown = false;
+  function readStock() {
+    return A.wholeNumber(stockInput ? stockInput.value : '', {
+      min: 0,
+      max: 1000000,
+      emptyMessage: 'Enter the quantity to add.',
+      negativeMessage: 'Quantity cannot be negative.',
+      decimalMessage: 'Enter a whole number (no decimals).',
+      invalidMessage: 'Enter a whole number, 0 or more.',
+      minMessage: 'Quantity cannot be negative.',
+      maxMessage: 'Quantity must be 1,000,000 or less.'
+    });
+  }
+  function paintStockError(message) {
+    if (message) {
+      err.textContent = message;
+      err.hidden = false;
+      stockErrShown = true;
+    } else if (stockErrShown) {
+      err.textContent = '';
+      err.hidden = true;
+      stockErrShown = false;
+    }
+  }
+  function checkStock(showError) {
+    var result = readStock();
+    if (stockInput) {
+      if (stockInput.setCustomValidity) stockInput.setCustomValidity(result.error || '');
+      if (result.error) stockInput.setAttribute('aria-invalid', 'true');
+      else stockInput.removeAttribute('aria-invalid');
+    }
+    if (showError) paintStockError(result.error || '');
+    else if (!result.error) paintStockError('');
+    return result;
+  }
+  if (stockInput) {
+    stockInput.addEventListener('input', function () {
+      var result = checkStock(false);
+      if (result.error && result.code !== 'empty') paintStockError(result.error);
+    });
+    stockInput.addEventListener('change', function () { checkStock(true); });
+    stockInput.addEventListener('blur', function () { checkStock(true); });
+  }
 
   function paintBanner() {
     offlineMode = !A.isOnline();
@@ -584,18 +629,23 @@
       setSizeHint(sizeInput.error);
       return;
     }
+    var stockCheck = checkStock(true);
+    if (stockCheck.error) {
+      if (stockInput && stockInput.focus) stockInput.focus();
+      return;
+    }
     btn.disabled = true;
     var fields = {
       barcode: A.$('#barcode').value, name: A.$('#name').value, category: A.$('#category').value,
       cost_price: A.$('#cost').value, price: A.$('#price').value,
-      stock: A.$('#stock').value, threshold: A.$('#threshold').value,
+      stock: stockCheck.value, threshold: A.$('#threshold').value,
       expiry_date: A.$('#expiry').value,
       size_value: sizeInput.value, size_unit: sizeInput.unit, size_label: sizeInput.label
     };
     var offlinePayload = {
       barcode: fields.barcode, name: fields.name, category: fields.category,
       cost_price: fields.cost_price, price: fields.price,
-      stock: Number(fields.stock || 0), low_stock_threshold: Number(fields.threshold || 5),
+      stock: fields.stock, low_stock_threshold: Number(fields.threshold || 5),
       expiry_date: fields.expiry_date || null,
       size_value: fields.size_value, size_unit: fields.size_unit, size_label: fields.size_label
     };

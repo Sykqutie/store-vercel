@@ -28,6 +28,7 @@
     '<div id="catalog" class="products"></div></div>' +
     '<aside class="panel pad cart"><div class="ph" style="margin-bottom:0"><h2>Current cart</h2></div>' +
     '<div id="lines" class="lines"></div>' +
+    '<div class="alert" id="qtyErr" hidden></div>' +
     '<div id="cashRow"><label for="tender">Cash received<input id="tender" inputmode="decimal" autocomplete="off" placeholder="0.00"></label><div class="quick" id="quick"></div></div>' +
     '<div id="sum" class="sum"></div>' +
     '<div class="alert" id="err" hidden></div>' +
@@ -40,7 +41,7 @@
 
   var el = {
     q: A.$('#q'), catFilter: A.$('#catFilter'), scan: A.$('#scan'), msg: A.$('#scanMsg'), catalog: A.$('#catalog'), lines: A.$('#lines'),
-    tender: A.$('#tender'), sum: A.$('#sum'), charge: A.$('#charge'), err: A.$('#err'),
+    tender: A.$('#tender'), sum: A.$('#sum'), charge: A.$('#charge'), err: A.$('#err'), qtyErr: A.$('#qtyErr'),
     quick: A.$('#quick'), cashRow: A.$('#cashRow'), count: A.$('#count'),
     banner: A.$('#offBanner'), pendList: A.$('#pendList'), syncMeta: A.$('#syncMeta'), syncNow: A.$('#syncNow')
   };
@@ -140,16 +141,86 @@
     }).join('') : '<div class="empty" style="grid-column:1/-1">No items match.</div>';
   }
 
+  function parseQuantity(raw, max) {
+    return A.wholeNumber(raw, {
+      min: 1,
+      max: max,
+      emptyMessage: 'Enter a quantity of 1 or more.',
+      negativeMessage: 'Quantity cannot be negative.',
+      decimalMessage: 'Enter a whole number (no decimals).',
+      invalidMessage: 'Enter a whole number of 1 or more.',
+      minMessage: 'Quantity must be at least 1.',
+      maxMessage: isCashier ? 'Not enough stock available.' : 'Only ' + max + ' in stock.'
+    });
+  }
+
+  function showQtyError(message) {
+    if (!el.qtyErr) return;
+    el.qtyErr.textContent = message || '';
+    el.qtyErr.hidden = !message;
+  }
+
+  function setLineQty(id, qty) {
+    var l = cart.filter(function (x) { return x.id === id; })[0];
+    if (!l) return;
+    l.qty = qty;
+    if (window.CartStore) { try { window.CartStore.save(cart); } catch (e) { /* ignore */ } }
+    var p = byId(id);
+    var lt = el.lines.querySelector('[data-line="' + id + '"]');
+    if (p && lt) lt.textContent = money(p.price * qty);
+    renderSummary();
+    renderCatalog();
+  }
+
+  function syncQtyInput(input, commit) {
+    var id = Number(input.getAttribute('data-qty'));
+    var p = byId(id);
+    var l = cart.filter(function (x) { return x.id === id; })[0];
+    if (!p || !l) return;
+    var raw = String(input.value == null ? '' : input.value).trim();
+    var maxStock = Math.max(0, Number(p.stock) || 0);
+    var parsed = parseQuantity(raw, maxStock);
+    if (parsed.error) {
+      input.setAttribute('aria-invalid', 'true');
+      input.classList.add('bad');
+      if (!commit) {
+        if (raw) showQtyError(parsed.error);
+        return;
+      }
+      if (!raw) {
+        input.value = String(l.qty);
+      } else if (parsed.code === 'max' && maxStock >= 1 && !isCashier) {
+        input.value = String(maxStock);
+        setLineQty(id, maxStock);
+      } else {
+        input.value = String(l.qty);
+      }
+      input.removeAttribute('aria-invalid');
+      input.classList.remove('bad');
+      showQtyError(parsed.error);
+      A.toast(parsed.error, true);
+      return;
+    }
+    input.removeAttribute('aria-invalid');
+    input.classList.remove('bad');
+    showQtyError('');
+    if (commit) input.value = String(parsed.value);
+    if (parsed.value !== l.qty) setLineQty(id, parsed.value);
+  }
+
   function renderCart() {
     el.lines.innerHTML = cart.length ? cart.map(function (l) {
       var p = byId(l.id);
       if (!p) return '';
+      // Cashiers must not see exact stock counts, so omit the numeric max from their inputs.
+      var qtyMax = isCashier ? '' : ' max="' + Math.max(0, Number(p.stock) || 0) + '"';
       return '<div class="line"><div class="ln"><b>' + esc(p.name) + '</b><span class="line-size">' + esc(A.sizeText(p)) + '</span><span class="mono mute" style="font-size:12px">' + money(p.price) + ' ea</span></div>' +
-        '<div class="qty"><button type="button" data-act="dec" data-id="' + p.id + '" aria-label="Decrease quantity">−</button><span class="mono">' + l.qty + '</span><button type="button" data-act="inc" data-id="' + p.id + '" aria-label="Increase quantity">+</button></div>' +
-        '<div class="mono lt">' + money(p.price * l.qty) + '</div>' +
+        '<div class="qty"><button type="button" data-act="dec" data-id="' + p.id + '" aria-label="Decrease quantity">−</button><input class="qty-input mono" type="number" inputmode="numeric" min="1" step="1"' + qtyMax + ' value="' + l.qty + '" data-qty="' + p.id + '" aria-label="Quantity for ' + esc(p.name) + '" autocomplete="off"><button type="button" data-act="inc" data-id="' + p.id + '" aria-label="Increase quantity">+</button></div>' +
+        '<div class="mono lt" data-line="' + p.id + '">' + money(p.price * l.qty) + '</div>' +
         '<button class="x" type="button" data-act="rm" data-id="' + p.id + '" aria-label="Remove ' + esc(p.name) + '">×</button></div>';
     }).join('') : '<div class="empty">Tap an item to add it.</div>';
     if (window.CartStore) { try { window.CartStore.save(cart); } catch (e) { /* ignore */ } }
+    showQtyError('');
     renderSummary();
     renderCatalog();
   }
@@ -353,7 +424,26 @@
     if (!cart.length) return;
     for (var ci = 0; ci < cart.length; ci++) {
       var cp = byId(cart[ci].id);
-      if (cp && isExpired(cp)) {
+      var cq = cart[ci].qty;
+      if (!cp) {
+        el.err.textContent = 'An item in the cart is no longer available.';
+        el.err.hidden = false;
+        el.charge.disabled = false;
+        return;
+      }
+      if (!Number.isInteger(cq) || cq < 1) {
+        el.err.textContent = 'Enter a whole quantity of 1 or more for ' + cp.name + '.';
+        el.err.hidden = false;
+        el.charge.disabled = false;
+        return;
+      }
+      if (cq > cp.stock) {
+        el.err.textContent = isCashier ? 'Not enough stock available for ' + cp.name + '.' : 'Only ' + cp.stock + ' of ' + cp.name + ' in stock.';
+        el.err.hidden = false;
+        el.charge.disabled = false;
+        return;
+      }
+      if (isExpired(cp)) {
         el.err.textContent = expiredText(cp) + ' Remove it from the cart.';
         el.err.hidden = false;
         el.charge.disabled = false;
@@ -428,6 +518,20 @@
   el.catalog.addEventListener('click', function (e) {
     var b = e.target.closest('.pc');
     if (b && !b.disabled) add(Number(b.dataset.id));
+  });
+  el.lines.addEventListener('input', function (e) {
+    var input = e.target.closest ? e.target.closest('[data-qty]') : null;
+    if (input) syncQtyInput(input, false);
+  });
+  el.lines.addEventListener('focusout', function (e) {
+    var input = e.target.closest ? e.target.closest('[data-qty]') : null;
+    if (input) syncQtyInput(input, true);
+  });
+  el.lines.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && e.target.matches && e.target.matches('[data-qty]')) {
+      e.preventDefault();
+      e.target.blur();
+    }
   });
   el.lines.addEventListener('click', function (e) {
     var b = e.target.closest('[data-act]');

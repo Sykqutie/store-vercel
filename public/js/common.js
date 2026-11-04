@@ -19,6 +19,29 @@
     var label = p && p.size_label;
     return label ? String(label) : 'Size not specified';
   }
+  // Whole-number input parser shared by inventory and POS quantity fields.
+  // Returns { value } or { error, code }; callers supply user-facing messages.
+  function wholeNumber(v, opts) {
+    opts = opts || {};
+    var min = opts.min === undefined ? 0 : opts.min;
+    var max = opts.max === undefined ? Number.MAX_SAFE_INTEGER : opts.max;
+    function fail(code, fallback) {
+      return { error: opts[code + 'Message'] || fallback, code: code };
+    }
+    var text = String(v == null ? '' : v).trim();
+    if (!text) return fail('empty', 'Enter a whole number.');
+    if (text.charAt(0) === '-') return fail('negative', 'Quantity cannot be negative.');
+    if (!/^\d+$/.test(text)) {
+      return /[.,]/.test(text)
+        ? fail('decimal', 'Enter a whole number (no decimals).')
+        : fail('invalid', 'Enter a whole number.');
+    }
+    var n = Number(text);
+    if (!Number.isFinite(n) || !Number.isSafeInteger(n)) return fail('invalid', 'Enter a whole number.');
+    if (n < min) return fail('min', 'Enter at least ' + min + '.');
+    if (n > max) return fail('max', 'Enter at most ' + max + '.');
+    return { value: n };
+  }
   function fmtDT(d) {
     return new Date(d).toLocaleString('en-PH', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   }
@@ -326,5 +349,5 @@
     return document.getElementById('main');
   }
 
-  window.App = { $: $, esc: esc, money: money, sizeText: sizeText, fmtDT: fmtDT, fmtDate: fmtDate, daysUntil: daysUntil, qs: qs, productIcon: productIcon, api: api, toast: toast, countTo: countTo, reveal: reveal, mountShell: mountShell, root: root, isOnline: isOnline, noteRefreshed: noteRefreshed, me: session };
+  window.App = { $: $, esc: esc, money: money, sizeText: sizeText, wholeNumber: wholeNumber, fmtDT: fmtDT, fmtDate: fmtDate, daysUntil: daysUntil, qs: qs, productIcon: productIcon, api: api, toast: toast, countTo: countTo, reveal: reveal, mountShell: mountShell, root: root, isOnline: isOnline, noteRefreshed: noteRefreshed, me: session };
 })();
