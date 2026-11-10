@@ -28,7 +28,7 @@
     '<div class="panel pad"><div class="ph"><h2>Add / restock inventory item</h2></div>' +
     '<form id="f" class="stack">' +
     '<div class="icon-preview" id="iconPreview" aria-live="polite"></div>' +
-    '<label for="barcode">Barcode<span class="bc-row"><input id="barcode" maxlength="64" required style="flex:1;min-width:0"><button class="btn sm" id="gen" type="button" title="Generate a scannable barcode">Generate</button></span></label>' +
+    '<label for="barcode">Barcode<span class="bc-row"><input id="barcode" maxlength="64" required style="flex:1;min-width:0"></span></label>' +
     '<label for="name">Item name<input id="name" maxlength="150" required></label>' +
     '<label for="category">Category<input id="category" maxlength="60" list="categoryOptions" autocomplete="off" placeholder="Leave blank to auto-categorize"><datalist id="categoryOptions"></datalist></label>' +
     '<div class="note" id="catHint" aria-live="polite">Leave blank to auto-categorize. Suggestions never replace a category you type.</div>' +
@@ -333,12 +333,6 @@
     w.focus();
   }
 
-  function genBarcode() {
-    var s = '4800';
-    for (var i = 0; i < 8; i++) s += Math.floor(Math.random() * 10);
-    return s;
-  }
-
   function expiryDays(p) {
     return p.expiry_date ? A.daysUntil(p.expiry_date) : null;
   }
@@ -550,14 +544,6 @@
       paintPreview();
     });
   });
-  var genBtn = A.$('#gen');
-  if (genBtn) genBtn.addEventListener('click', function () {
-    A.$('#barcode').value = genBarcode();
-    scheduleSuggestion();
-    scheduleSizeSuggestion();
-    A.$('#barcode').focus();
-  });
-
   body.addEventListener('click', function (e) {
     var del = e.target.closest('[data-del]');
     if (del) { askDelete(Number(del.getAttribute('data-del'))); return; }
